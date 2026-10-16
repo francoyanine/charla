@@ -1,6 +1,6 @@
 // Permite instalar Charla como app (Chrome/Edge: "Instalar app"; iPhone: "Agregar a inicio").
 // Red primero: siempre se usa la versión publicada y la caché solo sirve sin conexión.
-const CACHE = 'charla-v1';
+const CACHE = 'charla-v2';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (e) => {

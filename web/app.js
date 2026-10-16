@@ -1,6 +1,8 @@
 import { CONFIG } from './config.js';
+import { ico } from './iconos.js';
 
-const conServidor = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
+// ?demo fuerza el modo demo aunque haya servidor configurado (para probar el diseño).
+const conServidor = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey) && !new URLSearchParams(location.search).has('demo');
 const B = (conServidor ? await import('./backend-supabase.js') : await import('./backend-demo.js')).crear(CONFIG);
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -52,7 +54,7 @@ function autor(m) {
 }
 function avatar(u, chico = false) {
   const cls = `av${chico ? ' chico' : ''}${u.bot ? ' bot' : ''}`;
-  if (u.bot) return `<div class="${cls}">⚡</div>`;
+  if (u.bot) return `<div class="${cls}">${ico('campana')}</div>`;
   if (u.avatar_url) return `<div class="${cls}"><img src="${esc(u.avatar_url)}" alt="" referrerpolicy="no-referrer"></div>`;
   return `<div class="${cls}" style="background:${colorDe(u.id)}">${esc(iniciales(u.nombre))}</div>`;
 }
@@ -134,6 +136,8 @@ async function cargarCanal(id) {
 // ---------- pantalla de entrada ----------
 const LOGO = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#6e56cf"/><path d="M18 22a6 6 0 0 1 6-6h16a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6h-9l-8 7v-7h-1a6 6 0 0 1-4-1.5" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26" cy="28" r="2.2" fill="#fff"/><circle cx="32" cy="28" r="2.2" fill="#fff"/><circle cx="38" cy="28" r="2.2" fill="#fff"/></svg>`;
 
+const G_LOGO = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>`;
+
 function errorDeURL() {
   const p = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
   const e = p.get('error_description');
@@ -148,11 +152,12 @@ const enlaceMac = (clase) => (!window.charlaEscritorio && /Macintosh/.test(navig
 
 function pintarEntrada(error = '') {
   const cuerpo = conServidor
-    ? `<button class="primario" id="btnGoogle">Entrar con Google</button>
-       <p class="nota">Solo cuentas @${esc(CONFIG.dominios.join(', @'))}</p>`
+    ? `<button class="boton-google" id="btnGoogle">${G_LOGO}<span>Iniciar sesión con Google</span></button>
+       <p class="nota">Usa tu cuenta <b>@${esc(CONFIG.dominios.join(', @'))}</b></p>`
     : `<div class="lista-demo">${B.usuariosDemo().map((u) => `<button data-demo="${u.id}">${avatar(u, true)}<span>Entrar como <b>${esc(u.nombre)}</b></span></button>`).join('')}</div>
        <p class="nota">Modo demo: abre otra pestaña y entra como otra persona para ver el tiempo real.</p>`;
-  app.innerHTML = `<div class="entrada"><div class="tarjeta-entrada">${LOGO}<h1>Charla</h1><p>La conversación del equipo de ${esc(CONFIG.nombreEspacio)}.</p>${cuerpo}${error ? `<p class="error">${esc(error)}</p>` : ''}${enlaceMac('nota')}</div></div>`;
+  app.innerHTML = `<div class="entrada"><div class="entrada-marca">${LOGO}<span>Charla</span></div>
+    <div class="tarjeta-entrada"><h1>Inicia sesión en ${esc(CONFIG.nombreEspacio)}</h1><p>Te recomendamos usar tu correo de trabajo.</p>${cuerpo}${error ? `<p class="error">${esc(error)}</p>` : ''}${enlaceMac('nota')}</div></div>`;
   $('#btnGoogle')?.addEventListener('click', (e) => {
     e.target.disabled = true;
     B.entrar().catch((err) => pintarEntrada(err.message));
@@ -165,17 +170,28 @@ function pintarEntrada(error = '') {
 function pintarEstructura() {
   app.innerHTML = `
   <div class="shell" id="shell">
+    <header class="barra-superior">
+      <button class="icono btn-menu" id="btnMenu" title="Canales">${ico('menu')}</button>
+      <button class="buscar" id="btnBuscar">${ico('buscar')}<span>Buscar en ${esc(CONFIG.nombreEspacio)}</span><kbd>⌘K</kbd></button>
+    </header>
+    <nav class="riel">
+      <div class="riel-espacio" title="${esc(CONFIG.nombreEspacio)}">${esc(iniciales(CONFIG.nombreEspacio))}</div>
+      <button class="riel-item activo" data-riel="inicio">${ico('home')}<span>Inicio</span></button>
+      <button class="riel-item" data-riel="dms">${ico('dm')}<span>MD</span></button>
+      <button class="riel-item" data-riel="actividad">${ico('campana')}<span>Actividad</span></button>
+      <div class="riel-espacio-libre"></div>
+      <button class="riel-yo" id="btnYo" title="Tu perfil"></button>
+    </nav>
     <aside class="lateral">
-      <div class="espacio"><div class="espacio-nombre">${esc(CONFIG.nombreEspacio)}</div>${conServidor ? '' : '<span class="pastilla-demo">demo</span>'}</div>
-      <button class="buscar" id="btnBuscar"><span>Buscar mensajes</span><kbd>⌘K</kbd></button>
+      <div class="espacio"><button class="espacio-nombre" id="btnEspacio">${esc(CONFIG.nombreEspacio)} ${ico('abajo', 'chico')}</button>${conServidor ? '' : '<span class="pastilla-demo">demo</span>'}<button class="icono icono-claro" id="btnNuevoMensaje" title="Nuevo mensaje">${ico('nuevo')}</button></div>
       <nav class="listas">
-        <div class="seccion"><span>Canales</span><button class="mas" id="btnNuevoCanal" title="Crear canal">+</button></div>
+        <div class="seccion" data-seccion="canales">${ico('abajo', 'caret')}<span>Canales</span></div>
         <ul id="listaCanales"></ul>
-        <div class="seccion"><span>Mensajes directos</span></div>
+        <button class="item agregar" id="btnNuevoCanal"><span class="hash cuadro">${ico('mas')}</span><span class="nombre">Agregar canal</span></button>
+        <div class="seccion" data-seccion="dms" id="seccionDMs">${ico('abajo', 'caret')}<span>Mensajes directos</span></div>
         <ul id="listaDMs"></ul>
       </nav>
       ${enlaceMac('descarga-mac')}
-      <div class="yo" id="yo"></div>
     </aside>
     <main class="principal">
       <header class="cabecera" id="cabecera"></header>
@@ -185,8 +201,22 @@ function pintarEstructura() {
     </main>
     <aside class="hilo" id="hilo" hidden></aside>
   </div>`;
-  $('#btnBuscar').addEventListener('click', abrirBusqueda);
+  $('#btnBuscar').addEventListener('click', () => abrirBusqueda());
   $('#btnNuevoCanal').addEventListener('click', abrirNuevoCanal);
+  $('#btnMenu').addEventListener('click', () => $('#shell').classList.toggle('menu-abierto'));
+  $('#btnYo').addEventListener('click', menuYo);
+  $('#btnEspacio').addEventListener('click', menuYo);
+  $('#btnNuevoMensaje').addEventListener('click', () => { $('#seccionDMs').scrollIntoView({ block: 'start' }); $('#listaDMs .item')?.focus(); });
+  app.querySelectorAll('.seccion').forEach((sec) => sec.addEventListener('click', () => {
+    sec.classList.toggle('plegada');
+    sec.nextElementSibling.hidden = sec.classList.contains('plegada');
+  }));
+  app.querySelectorAll('[data-riel]').forEach((b) => b.addEventListener('click', () => {
+    app.querySelectorAll('[data-riel]').forEach((x) => x.classList.toggle('activo', x === b));
+    if (b.dataset.riel === 'dms') $('#seccionDMs').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (b.dataset.riel === 'actividad') abrirBusqueda(`@${S.yo.usuario}`);
+    $('#shell').classList.add('menu-abierto');
+  }));
   $('#listaCanales').addEventListener('click', (e) => { const b = e.target.closest('[data-canal]'); if (b) abrirCanal(b.dataset.canal); });
   $('#listaDMs').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-usuario]'); if (!b) return;
@@ -202,12 +232,12 @@ function pintarLateral() {
   const canales = S.canales.filter((c) => !c.es_dm).sort((a, b) => a.nombre.localeCompare(b.nombre));
   $('#listaCanales').innerHTML = canales.map((c) => {
     const n = S.noLeidos[c.id] || 0;
-    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"><span class="hash">#</span><span class="nombre">${esc(c.nombre)}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
+    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"><span class="hash">#</span><span class="nombre">${esc(c.nombre)}</span></button></li>`;
   }).join('');
   const gente = [...S.usuarios.values()].sort((a, b) => (a.id === S.yo.id) - (b.id === S.yo.id) || a.nombre.localeCompare(b.nombre));
   $('#listaDMs').innerHTML = gente.map((u) => {
     const c = dmCon(u.id); const n = c ? S.noLeidos[c.id] || 0 : 0;
-    return `<li><button class="item${c && S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-usuario="${u.id}"><span class="punto${S.enLinea.has(u.id) ? ' on' : ''}"></span><span class="nombre">${esc(u.nombre)}${u.id === S.yo.id ? ' <small>(tú)</small>' : ''}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
+    return `<li><button class="item${c && S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-usuario="${u.id}"><span class="av-dm">${avatar(u, true)}<span class="punto${S.enLinea.has(u.id) ? ' on' : ''}"></span></span><span class="nombre">${esc(u.nombre)}${u.id === S.yo.id ? ' <small>tú</small>' : ''}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
   }).join('');
   const total = Object.values(S.noLeidos).reduce((a, b) => a + b, 0);
   document.title = `${total ? `(${total}) ` : ''}${S.actual ? tituloCanal(S.actual) + ' · ' : ''}Charla`;
@@ -215,22 +245,48 @@ function pintarLateral() {
 }
 
 function pintarYo() {
+  $('#btnYo').innerHTML = `${avatar(S.yo)}<span class="punto on"></span>`;
+}
+
+function menuYo(e) {
+  e.stopPropagation();
+  document.querySelector('.menu-flotante')?.remove();
   const pedirAvisos = 'Notification' in window && Notification.permission === 'default';
-  $('#yo').innerHTML = `${avatar(S.yo, true)}<div class="datos"><b>${esc(S.yo.nombre)}</b><span>@${esc(S.yo.usuario)}</span></div>
-    ${pedirAvisos ? '<button class="icono" id="btnAvisos" title="Activar avisos de escritorio">🔔</button>' : ''}
-    <button class="icono" id="btnSalir" title="Salir">⎋</button>`;
-  $('#btnSalir').addEventListener('click', () => B.salir());
-  $('#btnAvisos')?.addEventListener('click', async () => { await Notification.requestPermission(); pintarYo(); });
+  const el = document.createElement('div');
+  el.className = 'menu-flotante';
+  el.innerHTML = `<div class="menu-cab">${avatar(S.yo)}<div><b>${esc(S.yo.nombre)}</b><span><i class="punto on"></i> Activo · @${esc(S.yo.usuario)}</span></div></div>
+    ${pedirAvisos ? `<button data-m="avisos">${ico('campana')}Activar avisos de escritorio</button>` : ''}
+    <button data-m="salir">${ico('salir')}Cerrar sesión en ${esc(CONFIG.nombreEspacio)}</button>`;
+  document.body.append(el);
+  const r = e.currentTarget.getBoundingClientRect();
+  el.style.left = `${Math.min(r.left, innerWidth - el.offsetWidth - 8)}px`;
+  el.style.top = r.top > innerHeight / 2 ? `${r.top - el.offsetHeight - 6}px` : `${r.bottom + 6}px`;
+  el.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-m]'); if (!b) return;
+    el.remove();
+    if (b.dataset.m === 'salir') B.salir();
+    if (b.dataset.m === 'avisos') await Notification.requestPermission();
+  });
+  setTimeout(() => addEventListener('mousedown', function fuera(ev) { if (!el.contains(ev.target)) { el.remove(); removeEventListener('mousedown', fuera); } }), 0);
 }
 
 function pintarCabecera() {
   const c = S.actual;
   const desc = c.es_dm ? (S.enLinea.has(otroDelDM(c)) ? 'En línea' : 'Desconectado') : c.descripcion;
+  const miembros = c.es_dm ? [] : [...S.usuarios.values()];
+  const titulo = c.es_dm
+    ? `<span class="av-dm">${avatar(usuario(otroDelDM(c)) || S.yo, true)}<span class="punto${S.enLinea.has(otroDelDM(c)) ? ' on' : ''}"></span></span>${esc(tituloCanal(c))}`
+    : `<span class="hash-titulo">#</span>${esc(c.nombre)}`;
   $('#cabecera').innerHTML = `
-    <button class="icono btn-menu" id="btnMenu" title="Canales">☰</button>
-    <div class="titulos"><h2>${esc(tituloCanal(c))}</h2>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>
-    <button class="btn-resumen" id="btnResumen" title="Resumen de las últimas 24 horas">✦ <span class="texto">Resumir</span></button>`;
-  $('#btnMenu').addEventListener('click', () => $('#shell').classList.toggle('menu-abierto'));
+    <div class="cab-fila">
+      <h2 title="${esc(desc || '')}">${titulo} ${ico('abajo', 'chico')}</h2>
+      ${miembros.length ? `<div class="miembros" title="${miembros.length} miembros">${miembros.slice(0, 3).map((u) => avatar(u, true)).join('')}<span>${miembros.length}</span></div>` : ''}
+    </div>
+    <div class="pestanas">
+      <button class="pestana activa">${ico('dm')}Mensajes</button>
+      <button class="pestana" id="btnResumen" title="Resumen de las últimas 24 horas con Claude">${ico('chispa')}Resumen</button>
+      ${desc && !c.es_dm ? `<span class="desc">${esc(desc)}</span>` : ''}
+    </div>`;
   $('#btnResumen').addEventListener('click', abrirResumen);
 }
 
@@ -260,18 +316,20 @@ function htmlMensaje(m, previo, { enHilo = false } = {}) {
     : `${m.texto ? `<div class="msg-texto">${formato(m.texto)}${m.editado ? ' <span class="editado">(editado)</span>' : ''}</div>` : ''}${archivo}`;
 
   const ultima = respuestas[respuestas.length - 1];
-  const hilo = respuestas.length ? `<button class="respuestas" data-accion="hilo">${[...new Set(respuestas.map((r) => r.user_id))].slice(0, 3).map((id) => avatar(usuario(id) || { id, nombre: '?' }, true)).join('')}${respuestas.length} ${respuestas.length === 1 ? 'respuesta' : 'respuestas'} <span>· ${hace(ultima.created_at)}</span></button>` : '';
+  const hilo = respuestas.length ? `<button class="respuestas" data-accion="hilo">${[...new Set(respuestas.map((r) => r.user_id))].slice(0, 5).map((id) => avatar(usuario(id) || { id, nombre: '?' }, true)).join('')}<b>${respuestas.length} ${respuestas.length === 1 ? 'respuesta' : 'respuestas'}</b><span class="ultima">Última respuesta ${hace(ultima.created_at)}</span><span class="ver-hilo">Ver hilo ${ico('derecha', 'chico')}</span></button>` : '';
 
+  const rapidas = ['✅', '👀', '🙌'].map((e) => `<button class="icono" data-accion="reaccion" data-emoji="${e}" title="Reaccionar con ${e}">${e}</button>`).join('');
   const acciones = `<div class="msg-acciones">
-      <button class="icono" data-accion="emoji" title="Reaccionar">☺︎</button>
-      ${enHilo ? '' : '<button class="icono" data-accion="hilo" title="Responder en hilo">💬</button>'}
-      ${mio ? '<button class="icono" data-accion="editar" title="Editar">✎</button><button class="icono" data-accion="borrar" title="Borrar">🗑</button>' : ''}
+      ${rapidas}
+      <button class="icono" data-accion="emoji" title="Agregar reacción">${ico('emoji')}</button>
+      ${enHilo ? '' : `<button class="icono" data-accion="hilo" title="Responder en el hilo">${ico('hilo')}</button>`}
+      ${mio ? `<button class="icono" data-accion="editar" title="Editar mensaje">${ico('editar')}</button><button class="icono peligro" data-accion="borrar" title="Eliminar mensaje">${ico('borrar')}</button>` : ''}
     </div>`;
 
   return `<div class="msg${compacto ? ' compacto' : ''}${mencionado ? ' mencionado' : ''}" data-id="${m.id}">
     ${compacto ? `<div class="msg-hora-lado">${hora(m.created_at)}</div>` : avatar(a)}
     <div class="msg-cuerpo">
-      ${compacto ? '' : `<div class="msg-meta"><b>${esc(a.nombre)}</b>${a.bot ? '<span class="etiqueta-bot">APP</span>' : ''}<time title="${new Date(m.created_at).toLocaleString('es')}">${hora(m.created_at)}</time></div>`}
+      ${compacto ? '' : `<div class="msg-meta"><b>${esc(a.nombre)}</b>${a.bot ? '<span class="etiqueta-bot">APLICACIÓN</span>' : ''}<time title="${new Date(m.created_at).toLocaleString('es')}">${hora(m.created_at)}</time></div>`}
       ${cuerpo}${reacciones}${hilo}
     </div>
     ${S.editando === m.id ? '' : acciones}
@@ -281,7 +339,7 @@ function htmlMensaje(m, previo, { enHilo = false } = {}) {
 function htmlLista(lista, opciones) {
   let html = ''; let previo = null;
   for (const m of lista) {
-    if (!previo || dia(previo.created_at) !== dia(m.created_at)) { html += `<div class="dia">${esc(dia(m.created_at))}</div>`; previo = null; }
+    if (!previo || dia(previo.created_at) !== dia(m.created_at)) { html += `<div class="dia"><span>${esc(dia(m.created_at))}</span></div>`; previo = null; }
     html += htmlMensaje(m, previo, opciones);
     previo = m;
   }
@@ -296,7 +354,7 @@ function pintarMensajes({ alFinal = false } = {}) {
   const arriba = el.scrollTop;
   const lista = (S.mensajes.get(S.actual.id) || []).filter((m) => !m.parent_id);
   el.innerHTML = lista.length ? htmlLista(lista)
-    : `<div class="vacio"><h3>${esc(tituloCanal(S.actual))}</h3>${S.actual.es_dm ? 'Este es el comienzo de su conversación.' : 'Todavía no hay mensajes. Escribe el primero.'}</div>`;
+    : `<div class="inicio-canal"><h3>${S.actual.es_dm ? '' : '<span class="hash-titulo">#</span>'}${esc(tituloCanal(S.actual).replace(/^# /, ''))}</h3><p>${S.actual.es_dm ? 'Este es el comienzo de tu historial de mensajes directos.' : `Este es el comienzo del canal <b>#${esc(S.actual.nombre)}</b>. ${esc(S.actual.descripcion || '')}`}</p></div>`;
   resolverArchivos(el);
   el.scrollTop = pegado ? el.scrollHeight : arriba;
   activarEditor(el);
@@ -309,7 +367,7 @@ function pintarHilo({ alFinal = false } = {}) {
   const yaAbierto = !el.hidden && el.dataset.padre === padre.id;
   if (!yaAbierto) {
     el.hidden = false; el.dataset.padre = padre.id;
-    el.innerHTML = `<header class="cabecera"><div class="titulos"><h2>Hilo</h2><div class="desc">${esc(tituloCanal(canal(padre.channel_id)))}</div></div><button class="icono" data-accion="cerrar-hilo" title="Cerrar">✕</button></header>
+    el.innerHTML = `<header class="cabecera cabecera-hilo"><div class="titulos"><h2>Hilo</h2><div class="desc">${esc(tituloCanal(canal(padre.channel_id)))}</div></div><button class="icono" data-accion="cerrar-hilo" title="Cerrar">${ico('cerrar')}</button></header>
       <div class="mensajes" id="mensajesHilo"></div><div class="escribiendo" id="escribiendoHilo"></div><div id="composerHilo"></div>`;
     montarComposer($('#composerHilo'), { canalId: padre.channel_id, parentId: padre.id, placeholder: 'Responder…' });
     alFinal = true;
@@ -398,12 +456,25 @@ function selectorEmoji(ancla, elegir) {
 function montarComposer(cont, { canalId, parentId = null, placeholder }) {
   const clave = `${canalId}:${parentId || ''}`;
   cont.innerHTML = `<div class="composer">
-    <div class="adjunto-prev" hidden><span></span><button class="icono" title="Quitar">✕</button></div>
+    <div class="formato">
+      <button class="icono" data-fmt="*" title="Negrita">${ico('negrita')}</button>
+      <button class="icono" data-fmt="_" title="Cursiva">${ico('cursiva')}</button>
+      <button class="icono" data-fmt="~" title="Tachado">${ico('tachado')}</button>
+      <span class="sep"></span>
+      <button class="icono" data-fmt="enlace" title="Enlace">${ico('enlace')}</button>
+      <span class="sep"></span>
+      <button class="icono" data-fmt="lista" title="Lista">${ico('lista')}</button>
+      <span class="sep"></span>
+      <button class="icono" data-fmt="\`" title="Código">${ico('codigo')}</button>
+    </div>
+    <div class="adjunto-prev" hidden><span></span><button class="icono" title="Quitar">${ico('cerrar')}</button></div>
     <textarea rows="1" placeholder="${esc(placeholder)}"></textarea>
     <div class="composer-barra">
-      <label class="icono" title="Adjuntar archivo"><input type="file" hidden>📎</label>
-      <span class="ayuda">*negrita* &nbsp;_cursiva_ &nbsp;\`código\` &nbsp;@mención · Shift+Enter para otra línea</span>
-      <button class="enviar" disabled>Enviar</button>
+      <label class="icono redondo" title="Adjuntar archivo"><input type="file" hidden>${ico('mas')}</label>
+      <button class="icono" data-ins="emoji" title="Emoji">${ico('emoji')}</button>
+      <button class="icono" data-ins="@" title="Mencionar a alguien">${ico('arroba')}</button>
+      <span class="ayuda"></span>
+      <button class="enviar" disabled title="Enviar ahora">${ico('enviar')}</button>
     </div>
     <div class="sugerencias" hidden></div>
   </div>`;
@@ -465,6 +536,33 @@ function montarComposer(cont, { canalId, parentId = null, placeholder }) {
   });
   btn.addEventListener('click', enviar);
 
+  // Barra de formato: envuelve la selección con la marca (o la inserta vacía).
+  function envolver(antes, despues = antes) {
+    const [i, f] = [ta.selectionStart, ta.selectionEnd];
+    const sel = ta.value.slice(i, f);
+    ta.value = ta.value.slice(0, i) + antes + sel + despues + ta.value.slice(f);
+    ta.setSelectionRange(i + antes.length, i + antes.length + sel.length);
+    ta.focus(); ta.dispatchEvent(new Event('input'));
+  }
+  cont.querySelector('.formato').addEventListener('mousedown', (e) => e.preventDefault());
+  cont.querySelector('.formato').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fmt]'); if (!b) return;
+    const f = b.dataset.fmt;
+    if (f === 'enlace') { const url = prompt('Dirección del enlace', 'https://'); if (url) envolver('', ` ${url}`); }
+    else if (f === 'lista') envolver(ta.value && !ta.value.endsWith('\n') && ta.selectionStart > 0 ? '\n• ' : '• ', '');
+    else envolver(f);
+  });
+  cont.querySelector('[data-ins="@"]').addEventListener('click', () => {
+    const i = ta.selectionStart; const pre = i > 0 && !/\s$/.test(ta.value.slice(0, i)) ? ' @' : '@';
+    ta.value = ta.value.slice(0, i) + pre + ta.value.slice(i);
+    ta.setSelectionRange(i + pre.length, i + pre.length); ta.focus(); ta.dispatchEvent(new Event('input'));
+  });
+  cont.querySelector('[data-ins="emoji"]').addEventListener('click', (e) => selectorEmoji(e.currentTarget, (emoji) => {
+    const i = ta.selectionStart;
+    ta.value = ta.value.slice(0, i) + emoji + ta.value.slice(i);
+    ta.setSelectionRange(i + emoji.length, i + emoji.length); ta.focus(); ta.dispatchEvent(new Event('input'));
+  }));
+
   async function enviar() {
     const texto = ta.value.trim();
     if ((!texto && !archivo) || btn.dataset.enviando) return;
@@ -519,11 +617,12 @@ function modal(html) {
 }
 function cerrarModal() { document.querySelector('.fondo-modal')?.remove(); }
 
-function abrirBusqueda() {
-  const el = modal('<input class="busqueda-input" placeholder="Buscar en todos los canales…" autofocus><div class="resultados"><div class="vacio">Escribe al menos 2 letras.</div></div>');
+function abrirBusqueda(inicial = '') {
+  const el = modal(`<div class="busqueda-cab">${ico('buscar')}<input class="busqueda-input" placeholder="Buscar en ${esc(CONFIG.nombreEspacio)}" autofocus></div><div class="resultados"><div class="vacio">Escribe al menos 2 letras.</div></div>`);
   const input = $('input', el); const res = $('.resultados', el);
   let t; let encontrados = [];
   input.focus();
+  if (inicial) setTimeout(() => { input.value = inicial; input.dispatchEvent(new Event('input')); });
   input.addEventListener('input', () => {
     clearTimeout(t);
     const q = input.value.trim();
@@ -544,7 +643,7 @@ function abrirBusqueda() {
 }
 
 function abrirNuevoCanal() {
-  const el = modal(`<div class="modal-cab"><h3>Crear canal</h3><button class="icono" data-cerrar>✕</button></div>
+  const el = modal(`<div class="modal-cab"><h3>Crear un canal</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
     <form class="modal-cuerpo"><label>Nombre</label><input class="campo" name="nombre" placeholder="ej. lanzamiento-colombia" maxlength="40" required>
     <label>Descripción <span style="font-weight:400;color:var(--tenue)">(opcional)</span></label><input class="campo" name="desc" maxlength="140" placeholder="¿De qué se habla aquí?">
     <p class="error" hidden></p><div class="modal-pie"><button type="button" class="secundario" data-cerrar>Cancelar</button><button class="primario">Crear</button></div></form>`);
@@ -565,7 +664,7 @@ function abrirNuevoCanal() {
 
 async function abrirResumen() {
   const c = S.actual;
-  const el = modal(`<div class="modal-cab"><h3>Resumen de ${esc(tituloCanal(c))}</h3><button class="icono" data-cerrar>✕</button></div>
+  const el = modal(`<div class="modal-cab"><h3>${ico('chispa')} Resumen de ${esc(tituloCanal(c))}</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
     <div class="modal-cuerpo resumen"><div class="cargando"><div class="giro"></div>Claude está leyendo las últimas 24 horas…</div></div>`);
   $('[data-cerrar]', el).addEventListener('click', cerrarModal);
   try { const texto = await B.resumir(c.id); $('.resumen', el).innerHTML = formato(texto); }
