@@ -142,14 +142,22 @@ function errorDeURL() {
   return /database error/i.test(e) ? `Solo pueden entrar cuentas @${CONFIG.dominios.join(', @')}.` : e;
 }
 
+const DESCARGA_MAC = 'https://github.com/francoyanine/charla/releases/latest/download/Charla.dmg';
+const enlaceMac = (clase) => (!window.charlaEscritorio && /Macintosh/.test(navigator.userAgent) && conServidor
+  ? `<p class="${clase}"><a href="${DESCARGA_MAC}">Descargar Charla para Mac</a></p>` : '');
+
 function pintarEntrada(error = '') {
   const cuerpo = conServidor
     ? `<button class="primario" id="btnGoogle">Entrar con Google</button>
        <p class="nota">Solo cuentas @${esc(CONFIG.dominios.join(', @'))}</p>`
     : `<div class="lista-demo">${B.usuariosDemo().map((u) => `<button data-demo="${u.id}">${avatar(u, true)}<span>Entrar como <b>${esc(u.nombre)}</b></span></button>`).join('')}</div>
        <p class="nota">Modo demo: abre otra pestaña y entra como otra persona para ver el tiempo real.</p>`;
-  app.innerHTML = `<div class="entrada"><div class="tarjeta-entrada">${LOGO}<h1>Charla</h1><p>La conversación del equipo de ${esc(CONFIG.nombreEspacio)}.</p>${cuerpo}${error ? `<p class="error">${esc(error)}</p>` : ''}</div></div>`;
-  $('#btnGoogle')?.addEventListener('click', (e) => { e.target.disabled = true; B.entrar().catch((err) => pintarEntrada(err.message)); });
+  app.innerHTML = `<div class="entrada"><div class="tarjeta-entrada">${LOGO}<h1>Charla</h1><p>La conversación del equipo de ${esc(CONFIG.nombreEspacio)}.</p>${cuerpo}${error ? `<p class="error">${esc(error)}</p>` : ''}${enlaceMac('nota')}</div></div>`;
+  $('#btnGoogle')?.addEventListener('click', (e) => {
+    e.target.disabled = true;
+    B.entrar().catch((err) => pintarEntrada(err.message));
+    if (window.charlaEscritorio) setTimeout(() => { e.target.disabled = false; }, 4000);
+  });
   app.querySelectorAll('[data-demo]').forEach((b) => b.addEventListener('click', () => B.entrarDemo(b.dataset.demo)));
 }
 
@@ -166,6 +174,7 @@ function pintarEstructura() {
         <div class="seccion"><span>Mensajes directos</span></div>
         <ul id="listaDMs"></ul>
       </nav>
+      ${enlaceMac('descarga-mac')}
       <div class="yo" id="yo"></div>
     </aside>
     <main class="principal">
@@ -202,6 +211,7 @@ function pintarLateral() {
   }).join('');
   const total = Object.values(S.noLeidos).reduce((a, b) => a + b, 0);
   document.title = `${total ? `(${total}) ` : ''}${S.actual ? tituloCanal(S.actual) + ' · ' : ''}Charla`;
+  if (window.charlaEscritorio) window.webkit.messageHandlers.charla.postMessage({ tipo: 'insignia', n: total });
 }
 
 function pintarYo() {
@@ -564,10 +574,15 @@ async function abrirResumen() {
 
 // ---------- tiempo real ----------
 function avisarEscritorio(m) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (!document.hidden && S.actual?.id === m.channel_id) return;
   const c = canal(m.channel_id);
   if (!c?.es_dm && !meMenciona(m.texto)) return;
+  if (window.charlaEscritorio) {
+    window.webkit.messageHandlers.charla.postMessage({ tipo: 'aviso', id: m.id, canal: m.channel_id,
+      titulo: c.es_dm ? autor(m).nombre : `${autor(m).nombre} en ${tituloCanal(c)}`, cuerpo: m.texto || '📎 Archivo' });
+    return;
+  }
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const n = new Notification(c.es_dm ? autor(m).nombre : `${autor(m).nombre} en ${tituloCanal(c)}`, { body: m.texto || '📎 Archivo', tag: m.id, silent: false });
   n.onclick = () => { focus(); irAMensaje(m); n.close(); };
 }
@@ -630,6 +645,14 @@ function pintarEscribiendo() {
   const h = $('#escribiendoHilo'); const padre = S.hilo && S.porId.get(S.hilo);
   if (h && padre) h.textContent = textoEscribiendo(`${padre.channel_id}:${padre.id}`);
 }
+
+// ---------- app de Mac ----------
+// La app nativa llama a estas funciones (ver mac/Sources/Charla/main.swift).
+window.charlaSesion = async (fragmento) => {
+  try { await B.recibirSesion(fragmento); location.reload(); }
+  catch (e) { if (!/cancelado/.test(e.message)) pintarEntrada(e.message); }
+};
+window.charlaIrA = (canalId) => { if (canal(canalId)) abrirCanal(canalId); };
 
 // ---------- arranque ----------
 addEventListener('keydown', (e) => {

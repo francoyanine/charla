@@ -79,6 +79,9 @@ a { color: var(--acento-texto); }
 .insignia { background: var(--acento); color: #fff; font-size: 11px; font-weight: 700; border-radius: 99px; padding: 0 6px; min-width: 18px; text-align: center; line-height: 18px; }
 .punto { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--tenue); flex: none; }
 .punto.on { background: var(--verde); border-color: var(--verde); }
+.descarga-mac { margin: 0; padding: 8px 16px; font-size: 12.5px; }
+.descarga-mac a { color: var(--acento-texto); text-decoration: none; }
+.descarga-mac a:hover { text-decoration: underline; }
 .yo { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--borde); }
 .yo .datos { flex: 1; min-width: 0; line-height: 1.25; }
 .yo .datos b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

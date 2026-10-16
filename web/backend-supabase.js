@@ -25,7 +25,19 @@ export function crear(cfg) {
     async entrar() {
       const opciones = { redirectTo: location.origin + location.pathname };
       if (cfg.dominios.length === 1) opciones.queryParams = { hd: cfg.dominios[0], prompt: 'select_account' };
+      if (window.charlaEscritorio) {
+        // En la app de Mac, Google se abre en la ventana segura del sistema y
+        // vuelve a charla://auth con la sesión (ver mac/Sources/Charla/main.swift).
+        const { url } = ok(await sb.auth.signInWithOAuth({ provider: 'google', options: { ...opciones, redirectTo: 'charla://auth', skipBrowserRedirect: true } }));
+        window.webkit.messageHandlers.charla.postMessage({ tipo: 'login', url });
+        return;
+      }
       ok(await sb.auth.signInWithOAuth({ provider: 'google', options: opciones }));
+    },
+    async recibirSesion(fragmento) {
+      const p = new URLSearchParams(fragmento);
+      if (p.get('error_description')) throw new Error(p.get('error_description'));
+      ok(await sb.auth.setSession({ access_token: p.get('access_token'), refresh_token: p.get('refresh_token') }));
     },
     async salir() { await sb.auth.signOut(); location.reload(); },
     async usuarios() { return ok(await sb.from('profiles').select('*').order('nombre')); },

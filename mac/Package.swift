@@ -1,0 +1,19 @@
+// swift-tools-version:5.9
+import PackageDescription
+
+let package = Package(
+    name: "Charla",
+    platforms: [.macOS(.v13)],
+    targets: [
+        .executableTarget(
+            name: "Charla",
+            path: "Sources/Charla",
+            linkerSettings: [
+                .linkedFramework("WebKit"),
+                .linkedFramework("AuthenticationServices"),
+                .linkedFramework("UserNotifications"),
+                .linkedFramework("ServiceManagement"),
+            ]
+        ),
+    ]
+)
