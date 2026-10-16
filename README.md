@@ -47,7 +47,7 @@ dos personas distintas para ver el tiempo real.
    Configuration (Site URL y Redirect URLs).
 6. **Resumen con Claude** (opcional): con la CLI de Supabase,
    ```bash
-   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+   supabase secrets set Api-key-charla=sk-ant-...
    supabase functions deploy resumir
    ```
    Usar una key propia de Charla con límite de gasto. Vive en Supabase, nunca en la app.

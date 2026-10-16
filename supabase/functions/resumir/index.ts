@@ -1,20 +1,21 @@
 // Función "resumir": Claude lee las últimas 24 h de un canal y devuelve un resumen.
 // La API key de Anthropic vive como secreto de Supabase, nunca dentro de la app.
 // Se publica desde el panel de Supabase (Edge Functions → resumir → Code) o con la CLI.
-// Secreto requerido: ANTHROPIC_API_KEY (Edge Functions → Secrets).
+// Secreto requerido (Edge Functions → Secrets): Api-key-charla, o ANTHROPIC_API_KEY.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+const API_KEY = Deno.env.get('Api-key-charla') ?? Deno.env.get('ANTHROPIC_API_KEY');
 const json = (cuerpo: unknown, status = 200) =>
   new Response(JSON.stringify(cuerpo), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
-    if (!Deno.env.get('ANTHROPIC_API_KEY')) throw new Error('Falta configurar la API key de Anthropic en Supabase (Edge Functions → Secrets).');
+    if (!API_KEY) throw new Error('Falta configurar la API key de Anthropic en Supabase (Edge Functions → Secrets).');
     const { channel_id, horas = 24 } = await req.json();
     // El cliente usa el token de quien pide: las políticas RLS deciden qué puede leer.
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
@@ -39,7 +40,7 @@ Deno.serve(async (req) => {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!,
+        'x-api-key': API_KEY,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
