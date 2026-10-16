@@ -71,6 +71,14 @@ Publicar desde cualquier lado:
 curl -X POST "$SUPABASE_URL/rest/v1/rpc/publicar" -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" -d '{"p_token":"<token>","p_texto":"⚠️ 3 oportunidades sin mover"}'
 ```
 
+Con archivos (por ejemplo, PDFs), usar la función `webhook`:
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/webhook" -H "Authorization: Bearer $SUPABASE_ANON_KEY" -H "Content-Type: application/json" -d '{"token":"<token>","texto":"...","adjuntos":[{"nombre":"a.pdf","tipo":"application/pdf","base64":"...","titulo":"..."}]}'
+```
+
+Publica el texto y después un mensaje por archivo.
+
 ## Archivos
 
 ```
