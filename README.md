@@ -55,6 +55,29 @@ dos personas distintas para ver el tiempo real.
 Cada persona abre la URL, entra con Google y, en Chrome, *Instalar Charla* (o en
 iPhone, Compartir → *Agregar a inicio*) para tenerla como app con avisos.
 
+## App de escritorio para Mac
+
+Descarga para el equipo: https://github.com/francoyanine/charla/releases/latest/download/Charla.dmg
+
+Es una ventana nativa (Swift + WebKit, en `mac/`) que abre la web publicada y le suma
+lo de una app de escritorio: queda en el Dock aunque se cierre la ventana, avisos de
+macOS, número de no leídos en el ícono, abrirse al iniciar sesión (menú Charla) y el
+login de Google en la ventana segura del sistema, que vuelve a `charla://auth`.
+Esa URL tiene que estar en Supabase → Authentication → URL Configuration → Redirect URLs.
+
+Para compilar (basta con las Command Line Tools):
+
+```bash
+cd mac && ./scripts/build-app.sh
+```
+
+Deja `mac/dist/Charla.app` y `mac/dist/Charla.dmg`. Para publicar una versión nueva,
+subir el número en el script y crear un release en GitHub con el `.dmg`. Los cambios de
+la web no necesitan versión nueva: la app siempre carga la web publicada.
+
+La firma es ad-hoc (como Susurro y Toma): la primera vez, Ajustes del Sistema →
+Privacidad y seguridad → "Abrir igualmente".
+
 ## Webhook entrante
 
 Crear un webhook para un canal (SQL Editor):
