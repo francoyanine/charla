@@ -97,7 +97,10 @@ export function crear(cfg) {
     },
     async resumir(canalId) {
       const { data, error } = await sb.functions.invoke('resumir', { body: { channel_id: canalId } });
-      if (error) throw new Error('No se pudo generar el resumen. ¿Está publicada la función "resumir"?');
+      if (error) {
+        const detalle = await error.context?.json?.().catch(() => null);
+        throw new Error(detalle?.error || 'No se pudo generar el resumen. ¿Está publicada la función "resumir"?');
+      }
       if (data.error) throw new Error(data.error);
       return data.resumen;
     },

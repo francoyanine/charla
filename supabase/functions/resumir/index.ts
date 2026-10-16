@@ -1,6 +1,7 @@
 // Función "resumir": Claude lee las últimas 24 h de un canal y devuelve un resumen.
 // La API key de Anthropic vive como secreto de Supabase, nunca dentro de la app.
-// Publicar:  supabase secrets set ANTHROPIC_API_KEY=...  &&  supabase functions deploy resumir
+// Se publica desde el panel de Supabase (Edge Functions → resumir → Code) o con la CLI.
+// Secreto requerido: ANTHROPIC_API_KEY (Edge Functions → Secrets).
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
 const CORS = {
@@ -13,6 +14,7 @@ const json = (cuerpo: unknown, status = 200) =>
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
+    if (!Deno.env.get('ANTHROPIC_API_KEY')) throw new Error('Falta configurar la API key de Anthropic en Supabase (Edge Functions → Secrets).');
     const { channel_id, horas = 24 } = await req.json();
     // El cliente usa el token de quien pide: las políticas RLS deciden qué puede leer.
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
@@ -21,7 +23,7 @@ Deno.serve(async (req) => {
     const desde = new Date(Date.now() - horas * 3600_000).toISOString();
     const { data: msgs, error } = await sb
       .from('messages')
-      .select('texto, created_at, bot_nombre, parent_id, autor:profiles(nombre)')
+      .select('texto, created_at, bot_nombre, parent_id, autor:profiles!messages_user_id_fkey(nombre)')
       .eq('channel_id', channel_id)
       .gte('created_at', desde)
       .order('created_at')
