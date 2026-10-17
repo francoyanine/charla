@@ -325,3 +325,12 @@ a:hover { text-decoration: underline; }
 
 .barra-superior .icono { color: rgba(255, 255, 255, 0.85); }
 .barra-superior .icono:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+
+/* ---------- Importar desde Slack ---------- */
+.importar p { margin: 0 0 12px; }
+.importar .barra { height: 8px; border-radius: 4px; background: var(--borde-suave); overflow: hidden; margin: 4px 0 10px; }
+.importar .barra span { display: block; height: 100%; background: var(--verde); transition: width .4s ease; }
+.nota-import { font-size: 13px; color: var(--suave); }
+.nota-import summary { cursor: pointer; }
+.item .hash .ico.chico { width: 14px; height: 14px; }
+.hash-titulo .ico { width: 16px; height: 16px; vertical-align: -2px; }

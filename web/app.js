@@ -14,6 +14,7 @@ const AGRUPAR_MS = 5 * 60 * 1000;
 const S = {
   yo: null,
   usuarios: new Map(),
+  slack: new Map(), // personas de Slack importadas (slack_id -> {nombre, avatar_url})
   canales: [],
   actual: null,
   mensajes: new Map(), // canalId -> [mensajes]
@@ -50,6 +51,10 @@ function hace(iso) {
 function usuario(id) { return S.usuarios.get(id); }
 function autor(m) {
   if (m.bot_nombre) return { nombre: m.bot_nombre, bot: true };
+  if (!m.user_id && m.slack_autor) {
+    const s = S.slack.get(m.slack_autor);
+    return { nombre: s?.nombre ?? 'Alguien de Slack', avatar_url: s?.avatar_url, id: m.slack_autor };
+  }
   return usuario(m.user_id) || { nombre: 'Ex integrante', id: m.user_id };
 }
 function avatar(u, chico = false) {
@@ -93,14 +98,17 @@ function formato(t) {
 
 // ---------- canales ----------
 const otroDelDM = (c) => c.miembros.find((id) => id !== S.yo.id) || S.yo.id;
+// DM importado de Slack con alguien que todavía no entró a Charla: solo estoy yo.
+const dmSinContraparte = (c) => c.es_dm && c.nombre.startsWith('slack:') && !c.miembros.some((id) => id !== S.yo.id);
 function tituloCanal(c) {
   if (!c) return '';
-  if (!c.es_dm) return `# ${c.nombre}`;
+  if (!c.es_dm) return `${c.es_privado ? '🔒 ' : '# '}${c.nombre}`;
+  if (dmSinContraparte(c)) return c.descripcion || 'Mensaje directo';
   const u = usuario(otroDelDM(c));
   return u ? (u.id === S.yo.id ? `${u.nombre} (tú)` : u.nombre) : 'Mensaje directo';
 }
 function dmCon(userId) {
-  return S.canales.find((c) => c.es_dm && c.miembros.includes(S.yo.id) && otroDelDM(c) === userId);
+  return S.canales.find((c) => c.es_dm && !dmSinContraparte(c) && c.miembros.includes(S.yo.id) && otroDelDM(c) === userId);
 }
 function canal(id) { return S.canales.find((c) => c.id === id); }
 
@@ -219,6 +227,7 @@ function pintarEstructura() {
   }));
   $('#listaCanales').addEventListener('click', (e) => { const b = e.target.closest('[data-canal]'); if (b) abrirCanal(b.dataset.canal); });
   $('#listaDMs').addEventListener('click', async (e) => {
+    const bc = e.target.closest('[data-canal]'); if (bc) return abrirCanal(bc.dataset.canal);
     const b = e.target.closest('[data-usuario]'); if (!b) return;
     let c = dmCon(b.dataset.usuario);
     if (!c) { c = await B.abrirDM(b.dataset.usuario); if (!canal(c.id)) S.canales.push(c); }
@@ -232,12 +241,16 @@ function pintarLateral() {
   const canales = S.canales.filter((c) => !c.es_dm).sort((a, b) => a.nombre.localeCompare(b.nombre));
   $('#listaCanales').innerHTML = canales.map((c) => {
     const n = S.noLeidos[c.id] || 0;
-    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"><span class="hash">#</span><span class="nombre">${esc(c.nombre)}</span></button></li>`;
+    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"><span class="hash">${c.es_privado ? ico('candado', 'chico') : '#'}</span><span class="nombre">${esc(c.nombre)}</span></button></li>`;
   }).join('');
   const gente = [...S.usuarios.values()].sort((a, b) => (a.id === S.yo.id) - (b.id === S.yo.id) || a.nombre.localeCompare(b.nombre));
   $('#listaDMs').innerHTML = gente.map((u) => {
     const c = dmCon(u.id); const n = c ? S.noLeidos[c.id] || 0 : 0;
     return `<li><button class="item${c && S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-usuario="${u.id}"><span class="av-dm">${avatar(u, true)}<span class="punto${S.enLinea.has(u.id) ? ' on' : ''}"></span></span><span class="nombre">${esc(u.nombre)}${u.id === S.yo.id ? ' <small>tú</small>' : ''}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
+  }).join('') + S.canales.filter(dmSinContraparte).map((c) => {
+    const n = S.noLeidos[c.id] || 0;
+    const s = [...S.slack.values()].find((x) => x.nombre === c.descripcion) || { nombre: c.descripcion || '?', id: c.id };
+    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}" title="Todavía no entra a Charla"><span class="av-dm">${avatar({ ...s, id: s.slack_id || c.id }, true)}<span class="punto"></span></span><span class="nombre">${esc(c.descripcion || 'Mensaje directo')}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
   }).join('');
   const total = Object.values(S.noLeidos).reduce((a, b) => a + b, 0);
   document.title = `${total ? `(${total}) ` : ''}${S.actual ? tituloCanal(S.actual) + ' · ' : ''}Charla`;
@@ -256,6 +269,7 @@ function menuYo(e) {
   el.className = 'menu-flotante';
   el.innerHTML = `<div class="menu-cab">${avatar(S.yo)}<div><b>${esc(S.yo.nombre)}</b><span><i class="punto on"></i> Activo · @${esc(S.yo.usuario)}</span></div></div>
     ${pedirAvisos ? `<button data-m="avisos">${ico('campana')}Activar avisos de escritorio</button>` : ''}
+    ${conServidor ? `<button data-m="importar">${ico('importar')}Importar desde Slack</button>` : ''}
     <button data-m="salir">${ico('salir')}Cerrar sesión en ${esc(CONFIG.nombreEspacio)}</button>`;
   document.body.append(el);
   const r = e.currentTarget.getBoundingClientRect();
@@ -266,6 +280,7 @@ function menuYo(e) {
     el.remove();
     if (b.dataset.m === 'salir') B.salir();
     if (b.dataset.m === 'avisos') await Notification.requestPermission();
+    if (b.dataset.m === 'importar') abrirImportar();
   });
   setTimeout(() => addEventListener('mousedown', function fuera(ev) { if (!el.contains(ev.target)) { el.remove(); removeEventListener('mousedown', fuera); } }), 0);
 }
@@ -273,10 +288,10 @@ function menuYo(e) {
 function pintarCabecera() {
   const c = S.actual;
   const desc = c.es_dm ? (S.enLinea.has(otroDelDM(c)) ? 'En línea' : 'Desconectado') : c.descripcion;
-  const miembros = c.es_dm ? [] : [...S.usuarios.values()];
+  const miembros = c.es_dm ? [] : c.es_privado ? c.miembros.map(usuario).filter(Boolean) : [...S.usuarios.values()];
   const titulo = c.es_dm
-    ? `<span class="av-dm">${avatar(usuario(otroDelDM(c)) || S.yo, true)}<span class="punto${S.enLinea.has(otroDelDM(c)) ? ' on' : ''}"></span></span>${esc(tituloCanal(c))}`
-    : `<span class="hash-titulo">#</span>${esc(c.nombre)}`;
+    ? `<span class="av-dm">${avatar(dmSinContraparte(c) ? { nombre: c.descripcion || '?', id: c.id } : usuario(otroDelDM(c)) || S.yo, true)}<span class="punto${S.enLinea.has(otroDelDM(c)) ? ' on' : ''}"></span></span>${esc(tituloCanal(c))}`
+    : `<span class="hash-titulo">${c.es_privado ? ico('candado') : '#'}</span>${esc(c.nombre)}`;
   $('#cabecera').innerHTML = `
     <div class="cab-fila">
       <h2 title="${esc(desc || '')}">${titulo} ${ico('abajo', 'chico')}</h2>
@@ -687,9 +702,25 @@ function avisarEscritorio(m) {
 }
 
 let marcarPendiente;
+let repintarPendiente;
+let recargarCanales;
+// Un mensaje con fecha vieja que llega por tiempo real es historial importado
+// de Slack: no cuenta como no leído, no avisa y se pinta de a tandas.
+const esHistorial = (m) => m.slack_id && Date.now() - new Date(m.created_at) > 10 * 60 * 1000;
 const handlers = {
   async onMensaje(tipo, nuevo, viejo) {
     if (tipo === 'DELETE') { const m = quitarMensaje(viejo.id); if (m && m.channel_id === S.actual?.id) repintar(); return; }
+    if (tipo === 'INSERT' && esHistorial(nuevo)) {
+      if (!canal(nuevo.channel_id)) {
+        clearTimeout(recargarCanales);
+        recargarCanales = setTimeout(async () => { S.canales = await B.canales(); pintarLateral(); }, 1500);
+        return;
+      }
+      if (!S.mensajes.has(nuevo.channel_id)) return;
+      guardarMensaje(nuevo);
+      if (nuevo.channel_id === S.actual?.id && !repintarPendiente) repintarPendiente = setTimeout(() => { repintarPendiente = null; repintar(); }, 800);
+      return;
+    }
     if (!canal(nuevo.channel_id)) { S.canales = await B.canales(); pintarLateral(); }
     const yaEstaba = S.porId.has(nuevo.id);
     const m = guardarMensaje(nuevo);
@@ -718,6 +749,7 @@ const handlers = {
     pintarLateral();
   },
   onUsuario(u) { S.usuarios.set(u.id, { ...S.usuarios.get(u.id), ...u }); pintarLateral(); },
+  onSlackUsuario(s) { S.slack.set(s.slack_id, s); },
   onPresencia(set) { S.enLinea = set; pintarLateral(); if (S.actual?.es_dm) pintarCabecera(); },
   onEscribiendo({ channel_id, parent_id, user_id }) {
     if (user_id === S.yo.id) return;
@@ -767,12 +799,93 @@ document.addEventListener('visibilitychange', () => {
 });
 setInterval(() => { if (S.actual) pintarMensajes(); }, 60000); // refresca "hace X min"
 
+// ---------- importar desde Slack ----------
+function abrirImportar() {
+  const el = modal(`<div class="modal-cab"><h3>${ico('importar')} Importar desde Slack</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
+    <div class="modal-cuerpo importar"><div class="cargando"><div class="giro"></div>Revisando…</div></div>`);
+  const cuerpo = $('.importar', el);
+  let activo = true;
+  const cerrar = () => { activo = false; cerrarModal(); };
+  $('[data-cerrar]', el).addEventListener('click', cerrar);
+
+  const progreso = (r) => {
+    const pct = r.total ? Math.round((r.i / r.total) * 100) : 0;
+    const que = r.tipo === 'dm' ? `tus mensajes con ${esc(r.actual)}` : r.tipo === 'grupo' ? 'un mensaje grupal' : `#${esc(r.actual ?? '')}`;
+    return `<p>${r.hecho ? 'Importación terminada.' : `Importando ${que}…`}</p>
+      <div class="barra"><span style="width:${r.hecho ? 100 : pct}%"></span></div>
+      <p class="nota-import">${r.i} de ${r.total} conversaciones · ${r.mensajes.toLocaleString('es')} mensajes · ${r.archivos} archivos${r.pesados ? ` · ${r.pesados} archivos de más de 20 MB quedaron como aviso` : ''}</p>
+      ${r.errores?.length ? `<details class="nota-import"><summary>${r.errores.length} conversaciones con problemas</summary>${r.errores.map((x) => `<div>${esc(x)}</div>`).join('')}</details>` : ''}`;
+  };
+
+  async function importar(accion = 'paso') {
+    let r;
+    try {
+      while (activo) {
+        r = await B.importarSlack(accion);
+        accion = 'paso';
+        cuerpo.innerHTML = progreso(r) + (r.hecho ? '' : '<p class="nota-import">Puedes cerrar esta ventana: la próxima vez sigue donde quedó.</p>');
+        if (r.hecho) break;
+        if (r.espera) await new Promise((ok) => setTimeout(ok, r.espera * 1000));
+      }
+    } catch (e) { cuerpo.innerHTML = `<p class="error">${esc(e.message)}</p><div class="modal-pie"><button class="primario" id="reintentar">Reintentar</button></div>`; $('#reintentar', cuerpo).addEventListener('click', () => importar()); return; }
+    if (r?.hecho) {
+      S.canales = await B.canales(); S.mensajes.clear(); S.porId.clear();
+      (await B.usuariosSlack().catch(() => [])).forEach((s) => S.slack.set(s.slack_id, s));
+      pintarLateral(); if (S.actual) abrirCanal(S.actual.id);
+      cuerpo.insertAdjacentHTML('beforeend', `<div class="modal-pie"><button class="secundario" id="otraVez">Importar lo nuevo otra vez</button><button class="primario" data-cerrar>Listo</button></div>`);
+      $('#otraVez', cuerpo).addEventListener('click', () => importar('reiniciar'));
+      $('[data-cerrar]', cuerpo).addEventListener('click', cerrar);
+    }
+  }
+
+  async function conectar() {
+    const url = await B.urlConectarSlack();
+    window.open(url, '_blank');
+    cuerpo.innerHTML = `<div class="cargando"><div class="giro"></div>Autoriza Charla en la ventana de Slack que se abrió. Esto sigue solo cuando termines.</div>`;
+    const hasta = Date.now() + 10 * 60 * 1000;
+    while (activo && Date.now() < hasta) {
+      await new Promise((ok) => setTimeout(ok, 2500));
+      if (await B.slackConectado().catch(() => false)) return importar('reiniciar');
+    }
+    if (activo) pantallaInicial(false);
+  }
+
+  function pantallaInicial(conectado, r) {
+    cuerpo.innerHTML = `<p>Copia a Charla tu historial de Slack: los canales donde estás (públicos y privados), tus mensajes directos y grupales, con hilos, reacciones y archivos de hasta 20 MB.</p>
+      <p class="nota-import">Cada persona importa lo suyo. Si alguien ya importó un canal, no se duplica nada. Los mensajes de quienes todavía no entran a Charla aparecen con su nombre de Slack y se les asignan cuando entren.</p>
+      ${r?.empezada && !r.hecho ? progreso(r) : ''}
+      <div class="modal-pie">${conectado
+        ? `<button class="secundario" id="reconectar">Conectar otra cuenta</button><button class="primario" id="empezar">${r?.empezada && !r.hecho ? 'Seguir importando' : r?.hecho ? 'Importar lo nuevo' : 'Empezar'}</button>`
+        : '<button class="primario" id="conectar">Conectar con Slack</button>'}</div>`;
+    $('#conectar', cuerpo)?.addEventListener('click', conectar);
+    $('#reconectar', cuerpo)?.addEventListener('click', conectar);
+    $('#empezar', cuerpo)?.addEventListener('click', () => importar(r?.empezada && !r.hecho ? 'paso' : 'reiniciar'));
+  }
+
+  B.importarSlack('estado').then((r) => pantallaInicial(r.conectado, r)).catch((e) => { cuerpo.innerHTML = `<p class="error">${esc(e.message)}</p>`; });
+}
+
+// Vuelta del "Conectar con Slack" (la abre Slack en una pestaña nueva).
+function avisoSlackDeURL() {
+  const m = location.hash.match(/^#slack=([\w-]+)/);
+  if (!m) return '';
+  history.replaceState(null, '', location.pathname + location.search);
+  if (m[1] === 'ok') {
+    if (window.opener) setTimeout(() => window.close(), 1500);
+    return 'Slack quedó conectado. Vuelve a la ventana de Charla donde empezaste: la importación sigue sola.';
+  }
+  return m[1] === 'cancelado' ? 'Cancelaste la conexión con Slack.' : `No se pudo conectar Slack (${m[1]}).`;
+}
+
 async function arrancar() {
-  const error = errorDeURL();
+  const avisoSlack = avisoSlackDeURL();
+  if (avisoSlack) setTimeout(() => aviso(avisoSlack), 600);
+  const error = errorDeURL() || avisoSlack;
   try { S.yo = await B.iniciar(); } catch (e) { return pintarEntrada(e.message); }
   if (!S.yo) return pintarEntrada(error);
-  const [usuarios, canales, noLeidos] = await Promise.all([B.usuarios(), B.canales(), B.noLeidos()]);
+  const [usuarios, canales, noLeidos, slack] = await Promise.all([B.usuarios(), B.canales(), B.noLeidos(), B.usuariosSlack().catch(() => [])]);
   usuarios.forEach((u) => S.usuarios.set(u.id, u));
+  slack.forEach((s) => S.slack.set(s.slack_id, s));
   S.canales = canales; S.noLeidos = noLeidos;
   pintarEstructura(); pintarYo(); pintarLateral();
   B.suscribir(handlers);

@@ -1,0 +1,22 @@
+{
+  "display_information": {
+    "name": "Charla Importar",
+    "description": "Copia tu historial de Slack a Charla, el chat interno de Everfresh Media.",
+    "background_color": "#4a154b"
+  },
+  "oauth_config": {
+    "redirect_urls": ["https://swcvialsunqnwyuwkydy.supabase.co/functions/v1/slack-oauth"],
+    "scopes": {
+      "user": [
+        "channels:history", "channels:read", "groups:history", "groups:read",
+        "im:history", "im:read", "mpim:history", "mpim:read",
+        "users:read", "users:read.email", "files:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

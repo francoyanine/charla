@@ -93,6 +93,26 @@ export function crear(cfg) {
       }));
       return res;
     },
+    async usuariosSlack() { return ok(await sb.from('slack_usuarios').select('slack_id, nombre, avatar_url, user_id')); },
+    async slackConectado() { return ok(await sb.rpc('slack_conectado')); },
+    async urlConectarSlack() {
+      const estado = ok(await sb.rpc('slack_iniciar'));
+      const p = new URLSearchParams({
+        client_id: cfg.slackClientId,
+        user_scope: 'channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read,users:read.email,files:read',
+        redirect_uri: `${cfg.supabaseUrl}/functions/v1/slack-oauth`,
+        state: estado,
+      });
+      return `https://slack.com/oauth/v2/authorize?${p}`;
+    },
+    async importarSlack(accion = 'paso') {
+      const { data, error } = await sb.functions.invoke('importar-slack', { body: { accion } });
+      if (error) {
+        const detalle = await error.context?.json?.().catch(() => null);
+        throw new Error(detalle?.error || 'No se pudo hablar con el importador. ¿Está publicada la función "importar-slack"?');
+      }
+      return data;
+    },
     async buscar(q) {
       const t = q.replace(/[%_,()]/g, ' ').trim();
       if (!t) return [];
@@ -122,6 +142,7 @@ export function crear(cfg) {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, (p) => h.onReaccion(p.eventType, p.new, p.old))
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channels' }, (p) => h.onCanal({ ...p.new, miembros: [] }))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (p) => p.new?.id && h.onUsuario(p.new))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'slack_usuarios' }, (p) => p.new?.slack_id && h.onSlackUsuario(p.new))
         .subscribe();
       pres = sb.channel('presencia', { config: { presence: { key: yo.id } } });
       pres.on('presence', { event: 'sync' }, () => h.onPresencia(new Set(Object.keys(pres.presenceState()))))

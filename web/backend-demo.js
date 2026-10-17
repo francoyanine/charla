@@ -169,6 +169,7 @@ export function crear() {
       }
       return res;
     },
+    async usuariosSlack() { return []; },
     async buscar(q) {
       const visibles = new Set(db.canales.filter(puedeVer).map((c) => c.id));
       const t = q.toLowerCase();
