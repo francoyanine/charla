@@ -1,7 +1,9 @@
 // Backend real: Supabase (Postgres + Realtime + Auth con Google + Storage).
 // Toda la seguridad está en las políticas RLS de supabase/esquema.sql; este
 // archivo solo traduce las llamadas de la app.
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+// supabase-js empaquetado en un solo archivo propio: el CDN encadenaba ~10 módulos en serie y
+// cada uno era un viaje de ida y vuelta (lento en redes con latencia alta, como en Colombia).
+import { createClient } from './vendor/supabase-2.45.4.js';
 
 const BUCKET = 'archivos';
 

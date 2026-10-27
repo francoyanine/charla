@@ -1,14 +1,30 @@
-// Permite instalar Charla como app (Chrome/Edge: "Instalar app"; iPhone: "Agregar a inicio").
-// Red primero: siempre se usa la versión publicada y la caché solo sirve sin conexión.
-const CACHE = 'charla-v2';
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+// Permite instalar Charla como app (Chrome/Android: "Instalar app"; iPhone: "Agregar a inicio").
+// Abre al instante desde la caché y trae la versión nueva por detrás: un cambio publicado
+// se ve en la apertura siguiente. Los datos (Supabase) nunca pasan por la caché.
+const CACHE = 'charla-v3';
+const BASE = ['./', 'index.html', 'app.js', 'app.css', 'config.js', 'iconos.js', 'backend-supabase.js',
+  'vendor/supabase-2.45.4.js', 'manifest.webmanifest', 'icon.svg'];
+const FUENTES = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(BASE)).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys()
+    .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  e.respondWith(fetch(e.request).then((r) => {
-    const copia = r.clone();
-    caches.open(CACHE).then((c) => c.put(e.request, copia));
-    return r;
-  }).catch(() => caches.match(e.request)));
+  if (e.request.method !== 'GET') return;
+  if (url.origin !== location.origin && !FUENTES.includes(url.origin)) return;
+  e.respondWith(caches.open(CACHE).then(async (c) => {
+    const guardada = await c.match(e.request, { ignoreSearch: e.request.mode === 'navigate' });
+    const nueva = fetch(e.request).then((r) => {
+      if (r.ok || r.type === 'opaque') c.put(e.request, r.clone());
+      return r;
+    });
+    if (guardada) { e.waitUntil(nueva.catch(() => {})); return guardada; }
+    return nueva;
+  }));
 });
