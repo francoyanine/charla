@@ -25,6 +25,8 @@ const S = {
   escribiendo: new Map(), // `${canal}:${hilo}` -> Map(userId -> timeout)
   editando: null,
   borradores: {},
+  urlsArchivo: new Map(), // ruta -> dirección ya resuelta
+  tamImagen: new Map(), // ruta -> [ancho, alto] reales
 };
 
 // ---------- utilidades ----------
@@ -235,6 +237,10 @@ function pintarEstructura() {
   });
   $('#mensajes').addEventListener('click', clickMensaje);
   $('#hilo').addEventListener('click', clickMensaje);
+  for (const cont of [$('#mensajes'), $('#hilo')]) {
+    cont.addEventListener('load', alCargarImagen, true);
+    cont.addEventListener('scroll', alDesplazar, { capture: true, passive: true });
+  }
 }
 
 function pintarLateral() {
@@ -322,7 +328,7 @@ function htmlMensaje(m, previo, { enHilo = false } = {}) {
   if (m.archivo) {
     const f = m.archivo;
     archivo = f.tipo?.startsWith('image/')
-      ? `<div class="archivo"><img data-ruta="${esc(f.ruta)}" alt="${esc(f.nombre)}"></div>`
+      ? `<div class="archivo">${htmlImagen(f)}</div>`
       : `<div class="archivo"><a class="tarjeta-archivo" data-ruta="${esc(f.ruta)}" data-nombre="${esc(f.nombre)}" target="_blank" rel="noopener"><span class="ext">${esc((f.nombre.split('.').pop() || 'arch').slice(0, 4))}</span><span>${esc(f.nombre)}<small>${pesoLegible(f.tamano)}</small></span></a></div>`;
   }
 
@@ -351,6 +357,35 @@ function htmlMensaje(m, previo, { enHilo = false } = {}) {
   </div>`;
 }
 
+// Una imagen ya vista se vuelve a pintar con su dirección y su tamaño reservado: así
+// repintar la lista (al enviar, al llegar un mensaje) no mueve el chat.
+const LADO_IMAGEN = 360;
+function htmlImagen(f) {
+  const url = S.urlsArchivo.get(f.ruta); const tam = S.tamImagen.get(f.ruta);
+  if (!url || !tam) return `<img data-ruta="${esc(f.ruta)}" alt="${esc(f.nombre)}">`;
+  const [w, h] = tam; const k = Math.min(1, LADO_IMAGEN / w, LADO_IMAGEN / h);
+  return `<img data-ruta="${esc(f.ruta)}" data-listo="1" src="${esc(url)}" alt="${esc(f.nombre)}" style="width:${Math.round(w * k)}px;aspect-ratio:${w}/${h}">`;
+}
+
+// El chat queda "pegado" al final mientras la persona no suba a leer. Si una imagen
+// termina de cargar y alarga la lista, se vuelve a bajar.
+function fijarAlFinal(el, pegado) {
+  el.dataset.pegado = pegado ? '1' : '';
+  if (pegado) el.scrollTop = el.scrollHeight;
+  el.dataset.alto = el.scrollHeight;
+}
+function alDesplazar(e) {
+  const el = e.target.closest?.('.mensajes'); if (!el) return;
+  if (el.dataset.pegado && String(el.scrollHeight) !== el.dataset.alto) return fijarAlFinal(el, true); // creció el contenido
+  el.dataset.pegado = cercaDelFinal(el) ? '1' : ''; el.dataset.alto = el.scrollHeight;
+}
+function alCargarImagen(e) {
+  const img = e.target; if (img.tagName !== 'IMG' || !img.dataset.ruta) return;
+  if (img.naturalWidth) S.tamImagen.set(img.dataset.ruta, [img.naturalWidth, img.naturalHeight]);
+  const el = img.closest('.mensajes');
+  if (el?.dataset.pegado) fijarAlFinal(el, true);
+}
+
 function htmlLista(lista, opciones) {
   let html = ''; let previo = null;
   for (const m of lista) {
@@ -371,7 +406,8 @@ function pintarMensajes({ alFinal = false } = {}) {
   el.innerHTML = lista.length ? htmlLista(lista)
     : `<div class="inicio-canal"><h3>${S.actual.es_dm ? '' : '<span class="hash-titulo">#</span>'}${esc(tituloCanal(S.actual).replace(/^# /, ''))}</h3><p>${S.actual.es_dm ? 'Este es el comienzo de tu historial de mensajes directos.' : `Este es el comienzo del canal <b>#${esc(S.actual.nombre)}</b>. ${esc(S.actual.descripcion || '')}`}</p></div>`;
   resolverArchivos(el);
-  el.scrollTop = pegado ? el.scrollHeight : arriba;
+  if (!pegado) el.scrollTop = arriba;
+  fijarAlFinal(el, pegado);
   activarEditor(el);
 }
 
@@ -394,7 +430,7 @@ function pintarHilo({ alFinal = false } = {}) {
     + `<div class="separador">${respuestas.length} ${respuestas.length === 1 ? 'respuesta' : 'respuestas'}</div>`
     + respuestas.map((m, i) => htmlMensaje(m, respuestas[i - 1] || null, { enHilo: true })).join('');
   resolverArchivos(cont);
-  if (pegado) cont.scrollTop = cont.scrollHeight;
+  fijarAlFinal(cont, pegado);
   activarEditor(cont);
 }
 
@@ -405,6 +441,7 @@ async function resolverArchivos(el) {
     if (!m?.archivo) continue;
     try {
       const url = await B.urlArchivo(m.archivo);
+      S.urlsArchivo.set(m.archivo.ruta, url);
       if (n.tagName === 'IMG') n.src = url; else { n.href = url; n.download = m.archivo.nombre; }
     } catch { /* el archivo ya no existe */ }
   }

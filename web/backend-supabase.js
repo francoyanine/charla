@@ -121,9 +121,11 @@ export function crear(cfg) {
       return ok(await sb.from('messages').select('*').ilike('texto', `%${t}%`).order('created_at', { ascending: false }).limit(50));
     },
     async urlArchivo(archivo) {
-      if (urls.has(archivo.ruta)) return urls.get(archivo.ruta);
+      // La dirección firmada dura 6 horas: se reutiliza hasta 5 y después se pide otra.
+      const previa = urls.get(archivo.ruta);
+      if (previa && Date.now() - previa.t < 5 * 3600_000) return previa.url;
       const { signedUrl } = ok(await sb.storage.from(BUCKET).createSignedUrl(archivo.ruta, 60 * 60 * 6));
-      urls.set(archivo.ruta, signedUrl);
+      urls.set(archivo.ruta, { url: signedUrl, t: Date.now() });
       return signedUrl;
     },
     escribiendo(canalId, parentId) {
