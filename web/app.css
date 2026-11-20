@@ -128,13 +128,16 @@ a:hover { text-decoration: underline; }
 .shell:has(.hilo:not([hidden])) .principal { border-radius: 0; margin-right: 0; }
 .cabecera { flex: none; border-bottom: 1px solid var(--borde-suave); padding: 0 16px 0 20px; }
 .cab-fila { display: flex; align-items: center; gap: 12px; height: 49px; }
-.cab-fila h2 { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; font-size: 18px; font-weight: 900; overflow: hidden; white-space: nowrap; }
+.cab-fila h2 { flex: 1; min-width: 0; display: flex; margin: 0; font-size: 18px; font-weight: 900; }
+.cab-fila h2 button { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 6px; font-weight: 900; padding: 3px 8px; margin-left: -8px; border-radius: 6px; overflow: hidden; white-space: nowrap; }
+.cab-fila h2 button:hover { background: var(--hover); }
 .cab-fila h2 .av-dm .av { width: 24px; height: 24px; }
 .cab-fila h2 .av-dm .punto { border-color: var(--fondo); }
 .hash-titulo { font-weight: 400; color: var(--suave); margin-right: 2px; }
-.miembros { display: flex; align-items: center; height: 28px; padding: 0 8px 0 4px; border: 1px solid var(--borde); border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--suave); }
+.miembros { flex: none; display: flex; align-items: center; height: 28px; padding: 0 8px 0 4px; border: 1px solid var(--borde); border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--suave); }
 .miembros .av { width: 20px; height: 20px; border-radius: 4px; font-size: 9px; border: 2px solid var(--fondo); margin-right: -6px; }
 .miembros span { margin-left: 12px; }
+.miembros:hover { background: var(--hover); }
 .pestanas { display: flex; align-items: center; gap: 4px; height: 38px; margin-bottom: -1px; }
 .pestana { display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 8px; font-size: 13px; font-weight: 700; color: var(--suave); border-bottom: 2px solid transparent; }
 .pestana .ico { width: 15px; height: 15px; }
@@ -354,3 +357,57 @@ a:hover { text-decoration: underline; }
 .franja-avisos .franja-activar { flex: none; background: #fff; color: #1164a3; font-weight: 700; border-radius: 6px; padding: 5px 12px; }
 .franja-avisos .franja-cerrar { flex: none; color: #fff; }
 .franja-avisos .franja-cerrar:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* ---------- Barra lateral como la de Slack: membresía y mensajes directos ---------- */
+.item.de-visita { font-style: italic; opacity: 0.85; }
+.fila-dm { position: relative; }
+.fila-dm .cerrar-dm { position: absolute; right: 12px; top: 3px; width: 22px; height: 22px; display: none; place-items: center; border-radius: 4px; color: var(--lateral-texto); }
+.fila-dm .cerrar-dm:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
+.fila-dm:hover .cerrar-dm, .fila-dm .cerrar-dm:focus-visible { display: grid; }
+.fila-dm:hover .item { padding-right: 30px; }
+.fila-dm:hover .insignia { display: none; }
+@media (hover: none) {
+  /* En el teléfono no hay "pasar el mouse": la X queda siempre a la vista, tenue. */
+  .fila-dm .cerrar-dm { display: grid; opacity: 0.55; }
+  .fila-dm .item { padding-right: 30px; }
+  .fila-dm .insignia { margin-right: 2px; }
+  .fila-dm:hover .insignia { display: inline; }
+}
+.barra-unirse { margin: 0 20px 20px; padding: 16px; border: 1px solid var(--borde); border-radius: 8px; background: var(--hover); text-align: center; }
+.barra-unirse p { margin: 0 0 12px; color: var(--suave); }
+.barra-unirse div { display: flex; justify-content: center; gap: 12px; }
+.opcional { font-weight: 400; color: var(--tenue); }
+.modal-cuerpo label.opcion { display: flex; align-items: flex-start; gap: 10px; font-weight: 400; margin: 6px 0; cursor: pointer; }
+.opcion input { margin-top: 5px; }
+.opcion b { display: flex; align-items: center; gap: 5px; }
+.opcion small { display: block; color: var(--suave); font-size: 13px; }
+.fila-canal { display: flex; align-items: center; gap: 12px; padding: 4px 20px; }
+.fila-canal:hover { background: var(--hover); }
+.fila-canal .ir { flex: 1; min-width: 0; text-align: left; padding: 6px 0; }
+.fila-canal .ir b { display: block; }
+.fila-canal .ir small { display: block; color: var(--suave); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fila-canal .ir:hover b { text-decoration: underline; }
+.fila-canal .unido { color: var(--verde); font-weight: 700; }
+.fila-canal .primario, .fila-canal .secundario { flex: none; height: 30px; padding: 0 12px; font-size: 13px; }
+.resultado.persona { display: flex; align-items: center; gap: 10px; }
+.resultado.persona small { color: var(--suave); }
+.resultado.persona:hover small { color: rgba(255, 255, 255, 0.85); }
+.resultado.persona .punto { border-color: var(--fondo); }
+.detalles h4 { margin: 22px 0 8px; font-size: 15px; font-weight: 900; }
+.detalles .desc-canal { color: var(--suave); margin: 0; }
+.detalles select.campo { margin-bottom: 8px; }
+.fila-fin { display: flex; justify-content: flex-end; margin-top: 12px; }
+.lista-personas { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow-y: auto; }
+.lista-personas li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.lista-personas li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lista-personas small { color: var(--tenue); margin-left: 4px; }
+.enlace { color: var(--azul); font-size: 13px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+.enlace:hover { text-decoration: underline; }
+.secundario.peligro { color: var(--rojo); border-color: var(--rojo); }
+.modal-pie .nota-import { margin-right: auto; align-self: center; }
+@media (max-width: 860px) {
+  .barra-unirse { margin: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+  .fondo-modal { padding-top: 6vh; }
+  .modal-cab { padding-left: 20px; }
+  .modal-cuerpo { padding-left: 20px; padding-right: 20px; }
+}

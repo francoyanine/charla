@@ -47,14 +47,25 @@ export function crear(cfg) {
     async canales() {
       return ok(await sb.from('channels').select('*, channel_members(user_id)').order('nombre')).map(conMiembros);
     },
-    async crearCanal(nombre, descripcion) {
-      const c = ok(await sb.from('channels').insert({ nombre, descripcion, creado_por: yo.id }).select().single());
-      return { ...c, miembros: [] };
-    },
-    async abrirDM(otro) {
-      const id = ok(await sb.rpc('abrir_dm', { otro }));
+    async canal(id) {
       return conMiembros(ok(await sb.from('channels').select('*, channel_members(user_id)').eq('id', id).single()));
     },
+    // Las reglas (quién puede crear, editar, agregar o sacar) viven en las funciones de
+    // supabase/migraciones/004_barra_lateral.sql.
+    async crearCanal(nombre, descripcion, { privado = false, miembros = [] } = {}) {
+      const id = ok(await sb.rpc('crear_canal', { p_nombre: nombre, p_descripcion: descripcion, p_privado: privado, p_miembros: miembros }));
+      return this.canal(id);
+    },
+    async editarCanal(id, nombre, descripcion) { ok(await sb.rpc('editar_canal', { p_canal: id, p_nombre: nombre, p_descripcion: descripcion })); },
+    async unirse(canalId) {
+      ok(await sb.from('channel_members').upsert({ channel_id: canalId, user_id: yo.id }, { ignoreDuplicates: true }));
+    },
+    async agregarAlCanal(canalId, userId) { ok(await sb.rpc('agregar_al_canal', { p_canal: canalId, p_user: userId })); },
+    async sacarDelCanal(canalId, userId) { ok(await sb.rpc('sacar_del_canal', { p_canal: canalId, p_user: userId })); },
+    async cerrarDM(canalId, hasta) {
+      ok(await sb.from('channel_members').update({ cerrado: hasta, last_read_at: new Date().toISOString() }).match({ channel_id: canalId, user_id: yo.id }));
+    },
+    async abrirDM(otro) { return this.canal(ok(await sb.rpc('abrir_dm', { otro }))); },
     async mensajes(canalId) {
       const filas = ok(await sb.from('messages').select('*, reacciones:reactions(message_id, user_id, emoji)')
         .eq('channel_id', canalId).order('created_at', { ascending: false }).limit(600));
@@ -81,22 +92,18 @@ export function crear(cfg) {
       const borradas = ok(await sb.from('reactions').delete().match({ message_id: messageId, user_id: yo.id, emoji }).select());
       if (!borradas.length) ok(await sb.from('reactions').insert({ message_id: messageId, user_id: yo.id, emoji }));
     },
+    // Solo actualiza: quien mira un canal público sin ser miembro no queda adentro por leerlo.
     async marcarLeido(canalId) {
-      ok(await sb.from('channel_members').upsert({ channel_id: canalId, user_id: yo.id, last_read_at: new Date().toISOString() }));
+      ok(await sb.from('channel_members').update({ last_read_at: new Date().toISOString() }).match({ channel_id: canalId, user_id: yo.id }));
     },
-    async noLeidos() {
-      const [canales, lecturas] = await Promise.all([
-        sb.from('channels').select('id').then(ok),
-        sb.from('channel_members').select('channel_id, last_read_at').eq('user_id', yo.id).then(ok),
-      ]);
-      const desde = Object.fromEntries(lecturas.map((l) => [l.channel_id, l.last_read_at]));
-      const res = {};
-      await Promise.all(canales.map(async ({ id }) => {
-        const { count } = await sb.from('messages').select('id', { count: 'exact', head: true })
-          .eq('channel_id', id).is('parent_id', null).gt('created_at', desde[id] || yo.created_at)
-          .or(`user_id.is.null,user_id.neq.${yo.id}`);
-        res[id] = count || 0;
-      }));
+    // Una sola consulta: de cada canal donde estoy, último mensaje, no leídos y hasta cuándo lo cerré.
+    async conversaciones() {
+      const res = { noLeidos: {}, ultimo: {}, cerrado: {} };
+      for (const f of ok(await sb.rpc('mis_conversaciones'))) {
+        res.noLeidos[f.channel_id] = f.no_leidos || 0;
+        if (f.ultimo) res.ultimo[f.channel_id] = f.ultimo;
+        if (f.cerrado) res.cerrado[f.channel_id] = f.cerrado;
+      }
       return res;
     },
     // Fecha del mensaje más nuevo que la persona puede ver (reloj del servidor).
@@ -185,6 +192,10 @@ export function crear(cfg) {
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (p) => h.onMensaje(p.eventType, p.new, p.old))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, (p) => h.onReaccion(p.eventType, p.new, p.old))
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channels' }, (p) => h.onCanal({ ...p.new, miembros: [] }))
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'channels' }, (p) => h.onCanalCambio(p.new))
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'channels' }, (p) => p.old?.id && h.onCanalBorrado(p.old.id))
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channel_members' }, (p) => h.onMiembro('INSERT', p.new))
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'channel_members' }, (p) => p.old?.channel_id && h.onMiembro('DELETE', p.old))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (p) => p.new?.id && h.onUsuario(p.new))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'slack_usuarios' }, (p) => p.new?.slack_id && h.onSlackUsuario(p.new));
         cambios = ch;

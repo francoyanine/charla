@@ -2,7 +2,7 @@
 // para que dos pestañas del mismo navegador se vean en tiempo real.
 // Cada pestaña puede entrar como una persona distinta.
 
-const CLAVE = 'charla-demo-v1';
+const CLAVE = 'charla-demo-v2';
 const CLAVE_YO = 'charla-demo-yo';
 const LIMITE_ARCHIVO = 1.5 * 1024 * 1024;
 
@@ -18,11 +18,18 @@ const uid = () => crypto.randomUUID();
 const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
 
 function semilla() {
-  const c = (nombre, descripcion) => ({ id: uid(), nombre, descripcion, es_dm: false, miembros: [], created_at: hace(60 * 24 * 30) });
-  const general = c('general', 'Anuncios y conversación de todo el equipo');
-  const marketing = c('marketing', 'Campañas, creativos y resultados');
-  const alertas = c('alertas-crm', 'Avisos automáticos del CRM');
-  const random = c('random', 'Lo que no es trabajo');
+  const todos = EQUIPO.map((u) => u.id);
+  const c = (nombre, descripcion, miembros, extra = {}) => ({ id: uid(), nombre, descripcion, es_dm: false, es_privado: false, miembros, created_at: hace(60 * 24 * 30), ...extra });
+  const dm = (a, b) => ({ id: uid(), nombre: `dm:${[a, b].sort().join(':')}`, descripcion: '', es_dm: true, es_privado: false, miembros: [...new Set([a, b])], created_at: hace(60 * 24 * 20) });
+  const general = c('general', 'Anuncios y conversación de todo el equipo', todos);
+  const marketing = c('marketing', 'Campañas, creativos y resultados', ['u-diego', 'u-franco', 'u-camila', 'u-valentina']);
+  const alertas = c('alertas-crm', 'Avisos automáticos del CRM', todos);
+  const random = c('random', 'Lo que no es trabajo', ['u-diego', 'u-valentina', 'u-tomas']);
+  const ventas = c('ventas', 'Cierres y seguimiento de llamadas', ['u-diego', 'u-tomas']);
+  const finanzas = c('finanzas', 'Caja y pagos', ['u-diego', 'u-franco'], { es_privado: true });
+  const direccion = c('direccion', 'Solo socios', ['u-diego'], { es_privado: true });
+  const francoDiego = dm('u-franco', 'u-diego'); const francoCamila = dm('u-franco', 'u-camila');
+  const valeTomas = dm('u-valentina', 'u-tomas'); const francoTomas = dm('u-franco', 'u-tomas'); // este último, sin mensajes
   const m = (canal, user_id, texto, min, extra = {}) => ({ id: uid(), channel_id: canal.id, user_id, bot_nombre: null, parent_id: null, texto, archivo: null, editado: false, created_at: hace(min), ...extra });
   const bienvenida = m(general, 'u-diego', '¡Bienvenidos a *Charla*! 🎉 Este es nuestro reemplazo de Slack: mismo flujo, sin pagar por usuario. Cualquier cosa que eche de menos, avísenle a @franco.', 60 * 26);
   const mensajes = [
@@ -34,13 +41,23 @@ function semilla() {
     m(marketing, 'u-franco', 'Buenísimo. Lo duplicamos mañana con presupuesto x2 y vemos si aguanta el costo.', 60 * 4),
     m(alertas, null, '⚠️ 3 oportunidades llevan más de 48 h sin moverse en *Ventas Front*.', 90, { bot_nombre: 'CRM' }),
     m(random, 'u-valentina', '¿Alguien sabe de un buen café cerca de la oficina? ☕', 60 * 30),
+    m(ventas, 'u-tomas', 'Hoy cerramos 2 de 5 llamadas. Mañana hay 7 agendadas.', 60 * 3),
+    m(finanzas, 'u-diego', 'Ya quedó pagada la pauta de noviembre.', 60 * 7),
+    m(direccion, 'u-diego', 'Notas de la reunión de socios.', 60 * 50),
+    m(francoDiego, 'u-diego', '¿Cómo va la migración desde Slack?', 60 * 6),
+    m(francoDiego, 'u-franco', 'Bien: esta semana pasamos a todo el equipo.', 60 * 6 - 2),
+    m(francoCamila, 'u-camila', 'Te dejé los creativos en la carpeta.', 60 * 28),
+    m(valeTomas, 'u-tomas', '¿Almorzamos?', 60 * 9),
   ];
   const reacciones = [
     { message_id: bienvenida.id, user_id: 'u-valentina', emoji: '🎉' },
     { message_id: bienvenida.id, user_id: 'u-tomas', emoji: '🎉' },
     { message_id: bienvenida.id, user_id: 'u-camila', emoji: '❤️' },
   ];
-  return { usuarios: EQUIPO.map((u) => ({ ...u, email: `${u.usuario}@demo`, avatar_url: null, created_at: hace(60 * 24 * 30) })), canales: [general, marketing, alertas, random], mensajes, reacciones, lecturas: {} };
+  return { usuarios: EQUIPO.map((u) => ({ ...u, email: `${u.usuario}@demo`, avatar_url: null, created_at: hace(60 * 24 * 30) })),
+    canales: [general, marketing, alertas, random, ventas, finanzas, direccion, francoDiego, francoCamila, valeTomas, francoTomas], mensajes, reacciones,
+    // Los mensajes directos de ejemplo ya están leídos: la demo abre sin avisos pendientes.
+    lecturas: Object.fromEntries([francoDiego, francoCamila, valeTomas].flatMap((d) => d.miembros.map((u) => [`${d.id}:${u}`, new Date().toISOString()]))), cerrados: {} };
 }
 
 function leer() {
@@ -64,7 +81,9 @@ export function crear() {
     if (!h) return;
     if (ev.t === 'msg') h.onMensaje(ev.tipo, ev.nuevo, ev.viejo);
     else if (ev.t === 'reac') h.onReaccion(ev.tipo, ev.nuevo, ev.viejo);
-    else if (ev.t === 'canal') h.onCanal(ev.c);
+    else if (ev.t === 'canal') { if (puedeVer(ev.c)) h.onCanal(ev.c); }
+    else if (ev.t === 'canalcambio') { if (puedeVer(ev.c)) h.onCanalCambio(ev.c); }
+    else if (ev.t === 'miembro') h.onMiembro(ev.tipo, ev.fila);
     else if (ev.t === 'esc') h.onEscribiendo(ev.p);
     else if (ev.t === 'hola') { if (ev.id) vistos.set(ev.id, Date.now()); presencia(); }
     else if (ev.t === 'adios') { vistos.delete(ev.id); presencia(); }
@@ -78,13 +97,15 @@ export function crear() {
   }
   if (bc) bc.onmessage = (e) => {
     const ev = e.data;
-    if (['msg', 'reac', 'canal'].includes(ev.t)) db = leer() || db;
+    if (['msg', 'reac', 'canal', 'canalcambio', 'miembro'].includes(ev.t)) db = leer() || db;
     if (ev.t === 'hola' && ev.responder && yo) bc.postMessage({ t: 'hola', id: yo.id });
     despachar(ev);
   };
 
   const conReacciones = (m) => ({ ...m, reacciones: db.reacciones.filter((r) => r.message_id === m.id).map((r) => ({ ...r })) });
-  const puedeVer = (c) => !c.es_dm || c.miembros.includes(yo.id);
+  // Igual que el servidor: los públicos los ve todo el equipo; privados y DMs, solo sus miembros.
+  const puedeVer = (c) => (!c.es_dm && !c.es_privado) || c.miembros.includes(yo.id);
+  const buscarCanal = (id) => { const c = db.canales.find((x) => x.id === id); if (!c) throw new Error('Ese canal ya no existe.'); return c; };
   const leerArchivo = (f) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(f); });
 
   return {
@@ -100,19 +121,43 @@ export function crear() {
     async salir() { bc?.postMessage({ t: 'adios', id: yo?.id }); sessionStorage.removeItem(CLAVE_YO); location.reload(); },
     async usuarios() { return db.usuarios; },
     async canales() { return db.canales.filter(puedeVer); },
-    async crearCanal(nombre, descripcion) {
+    async crearCanal(nombre, descripcion, { privado = false, miembros = [] } = {}) {
       if (db.canales.some((c) => c.nombre === nombre)) throw new Error(`Ya existe #${nombre}`);
-      const c = { id: uid(), nombre, descripcion, es_dm: false, miembros: [], creado_por: yo.id, created_at: new Date().toISOString() };
+      const c = { id: uid(), nombre, descripcion, es_dm: false, es_privado: privado, miembros: [...new Set([yo.id, ...miembros])], creado_por: yo.id, created_at: new Date().toISOString() };
       db.canales.push(c);
       emitir({ t: 'canal', c });
       return c;
+    },
+    async editarCanal(id, nombre, descripcion) {
+      const c = buscarCanal(id);
+      if (db.canales.some((x) => x.nombre === nombre && x.id !== id)) throw new Error(`Ya existe #${nombre}`);
+      Object.assign(c, { nombre, descripcion });
+      emitir({ t: 'canalcambio', c });
+    },
+    async unirse(canalId) { return this.agregarAlCanal(canalId, yo.id); },
+    async agregarAlCanal(canalId, userId) {
+      const c = buscarCanal(canalId);
+      if (c.miembros.includes(userId)) return;
+      c.miembros.push(userId);
+      emitir({ t: 'miembro', tipo: 'INSERT', fila: { channel_id: canalId, user_id: userId } });
+    },
+    async sacarDelCanal(canalId, userId) {
+      const c = buscarCanal(canalId);
+      if (c.nombre === 'general') throw new Error('De general no se puede salir.');
+      c.miembros = c.miembros.filter((id) => id !== userId);
+      emitir({ t: 'miembro', tipo: 'DELETE', fila: { channel_id: canalId, user_id: userId } });
+    },
+    async cerrarDM(canalId, hasta) {
+      db.cerrados[`${canalId}:${yo.id}`] = hasta;
+      db.lecturas[`${canalId}:${yo.id}`] = new Date().toISOString();
+      guardar();
     },
     async abrirDM(otro) {
       const [a, b] = [yo.id, otro].sort();
       const nombre = `dm:${a}:${b}`;
       let c = db.canales.find((x) => x.nombre === nombre);
       if (!c) {
-        c = { id: uid(), nombre, descripcion: '', es_dm: true, miembros: [...new Set([a, b])], creado_por: yo.id, created_at: new Date().toISOString() };
+        c = { id: uid(), nombre, descripcion: '', es_dm: true, es_privado: false, miembros: [...new Set([a, b])], creado_por: yo.id, created_at: new Date().toISOString() };
         db.canales.push(c);
         emitir({ t: 'canal', c });
       }
@@ -158,14 +203,18 @@ export function crear() {
       }
     },
     async marcarLeido(canalId) {
+      if (!db.canales.find((c) => c.id === canalId)?.miembros.includes(yo.id)) return;
       db.lecturas[`${canalId}:${yo.id}`] = new Date().toISOString();
       guardar();
     },
-    async noLeidos() {
-      const res = {};
-      for (const c of db.canales.filter(puedeVer)) {
+    async conversaciones() {
+      const res = { noLeidos: {}, ultimo: {}, cerrado: {} };
+      for (const c of db.canales.filter((x) => x.miembros.includes(yo.id))) {
+        const suyos = db.mensajes.filter((m) => m.channel_id === c.id);
         const desde = db.lecturas[`${c.id}:${yo.id}`] || '';
-        res[c.id] = db.mensajes.filter((m) => m.channel_id === c.id && !m.parent_id && m.user_id !== yo.id && m.created_at > desde).length;
+        res.noLeidos[c.id] = suyos.filter((m) => !m.parent_id && m.user_id !== yo.id && m.created_at > desde).length;
+        if (suyos.length) res.ultimo[c.id] = suyos.reduce((a, m) => (m.created_at > a ? m.created_at : a), '');
+        if (db.cerrados[`${c.id}:${yo.id}`]) res.cerrado[c.id] = db.cerrados[`${c.id}:${yo.id}`];
       }
       return res;
     },
@@ -173,7 +222,7 @@ export function crear() {
     // Menciones sin leer por canal, con la misma regla que el servidor.
     async avisos() {
       const re = new RegExp(`(^|[\\s(])@(${[yo.usuario, 'canal', 'todos', 'aqui'].map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})($|[^a-zA-Z0-9_])`, 'i');
-      return db.canales.filter((c) => puedeVer(c) && !c.es_dm).map((c) => {
+      return db.canales.filter((c) => c.miembros.includes(yo.id) && !c.es_dm).map((c) => {
         const desde = db.lecturas[`${c.id}:${yo.id}`] || '';
         return { channel_id: c.id, directos: 0, menciones: db.mensajes.filter((m) => m.channel_id === c.id && m.user_id !== yo.id && m.created_at > desde && re.test(m.texto || '')).length };
       }).filter((f) => f.menciones);

@@ -21,6 +21,8 @@ const S = {
   mensajes: new Map(), // canalId -> [mensajes]
   porId: new Map(),
   noLeidos: {},
+  ultimo: {}, // canalId -> fecha del último mensaje
+  cerrado: {}, // canalId -> fecha hasta la que cerré esa conversación
   hilo: null,
   enLinea: new Set(),
   escribiendo: new Map(), // `${canal}:${hilo}` -> Map(userId -> timeout)
@@ -53,6 +55,10 @@ function hace(iso) {
   if (min < 1440) return `hace ${Math.round(min / 60)} h`;
   return dia(iso).toLowerCase();
 }
+const ms = (iso) => (iso ? Date.parse(iso) || 0 : 0);
+const sinTildes = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const slugCanal = (s) => sinTildes(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const porNombre = (a, b) => a.nombre.localeCompare(b.nombre, 'es');
 function usuario(id) { return S.usuarios.get(id); }
 function autor(m) {
   if (m.bot_nombre) return { nombre: m.bot_nombre, bot: true };
@@ -112,10 +118,34 @@ function tituloCanal(c) {
   const u = usuario(otroDelDM(c));
   return u ? (u.id === S.yo.id ? `${u.nombre} (tú)` : u.nombre) : 'Mensaje directo';
 }
+// Si hay más de una conversación con la misma persona, gana la más reciente.
 function dmCon(userId) {
-  return S.canales.find((c) => c.es_dm && !dmSinContraparte(c) && c.miembros.includes(S.yo.id) && otroDelDM(c) === userId);
+  return S.canales.filter((c) => c.es_dm && !dmSinContraparte(c) && c.miembros.includes(S.yo.id) && otroDelDM(c) === userId)
+    .sort((a, b) => ms(S.ultimo[b.id]) - ms(S.ultimo[a.id]))[0];
 }
 function canal(id) { return S.canales.find((c) => c.id === id); }
+// Vuelve a pedir los canales (me agregaron a uno, llegó un DM nuevo…).
+async function traerCanales() {
+  S.canales = await B.canales();
+  if (S.actual) S.actual = canal(S.actual.id) || S.actual;
+  pintarLateral();
+}
+// De cada canal donde estoy: no leídos, último mensaje y hasta cuándo cerré la conversación.
+async function traerConversaciones() {
+  const conv = await B.conversaciones();
+  S.noLeidos = conv.noLeidos; S.ultimo = conv.ultimo; S.cerrado = conv.cerrado;
+}
+const soyMiembro = (c) => c.miembros.includes(S.yo.id);
+const esGeneral = (c) => c.nombre === 'general';
+// Un DM se lista si tiene mensajes y no lo cerré después del último (o si lo tengo abierto).
+const dmCerrado = (c) => ms(S.cerrado[c.id]) >= ms(S.ultimo[c.id]);
+const dmVisible = (c) => c.es_dm && soyMiembro(c) && (S.actual?.id === c.id || (Boolean(S.ultimo[c.id]) && !dmCerrado(c)));
+function personaDM(c) {
+  if (!dmSinContraparte(c)) return usuario(otroDelDM(c)) || { nombre: 'Mensaje directo', id: c.id };
+  const s = [...S.slack.values()].find((x) => x.nombre === c.descripcion);
+  return { nombre: c.descripcion || 'Mensaje directo', avatar_url: s?.avatar_url, id: s?.slack_id || c.id };
+}
+const canalDeInicio = () => S.canales.find((c) => esGeneral(c) && soyMiembro(c)) || S.canales.find((c) => !c.es_dm && soyMiembro(c)) || S.canales.find((c) => !c.es_dm);
 
 // ---------- mensajes en memoria ----------
 function guardarMensaje(m) {
@@ -123,6 +153,7 @@ function guardarMensaje(m) {
   if (previo) { Object.assign(previo, { ...m, reacciones: m.reacciones || previo.reacciones }); return previo; }
   const nuevo = { ...m, reacciones: m.reacciones || [] };
   S.porId.set(m.id, nuevo);
+  if (ms(m.created_at) > ms(S.ultimo[m.channel_id])) S.ultimo[m.channel_id] = m.created_at;
   const lista = S.mensajes.get(m.channel_id);
   if (lista) {
     lista.push(nuevo);
@@ -169,10 +200,10 @@ async function ponerseAlDia() {
       // Estuvo mucho tiempo sin conexión: se vuelve a cargar todo.
       ultimoVisto = nuevos[nuevos.length - 1].created_at;
       S.mensajes.clear(); S.porId.clear();
-      S.noLeidos = await B.noLeidos();
+      await traerConversaciones();
       await AV.recargar();
       ultimoVisto = (await B.ultimaFecha()) || ultimoVisto;
-      pintarLateral(); if (S.actual) abrirCanal(S.actual.id);
+      await traerCanales(); if (S.actual) abrirCanal(S.actual.id);
     } else for (const m of nuevos) if (!S.porId.has(m.id)) await handlers.onMensaje('INSERT', m);
   } catch { /* sin red: se reintenta en la próxima vuelta */ }
   poniendoAlDia = false;
@@ -232,9 +263,10 @@ function pintarEstructura() {
       <nav class="listas">
         <div class="seccion" data-seccion="canales">${ico('abajo', 'caret')}<span>Canales</span></div>
         <ul id="listaCanales"></ul>
-        <button class="item agregar" id="btnNuevoCanal"><span class="hash cuadro">${ico('mas')}</span><span class="nombre">Agregar canal</span></button>
+        <button class="item agregar" id="btnAgregarCanal"><span class="hash cuadro">${ico('mas')}</span><span class="nombre">Agregar canales</span></button>
         <div class="seccion" data-seccion="dms" id="seccionDMs">${ico('abajo', 'caret')}<span>Mensajes directos</span></div>
         <ul id="listaDMs"></ul>
+        <button class="item agregar" id="btnNuevoDM"><span class="hash cuadro">${ico('mas')}</span><span class="nombre">Nuevo mensaje</span></button>
       </nav>
       ${enlaceMac('descarga-mac')}
     </aside>
@@ -247,11 +279,15 @@ function pintarEstructura() {
     <aside class="hilo" id="hilo" hidden></aside>
   </div>`;
   $('#btnBuscar').addEventListener('click', () => abrirBusqueda());
-  $('#btnNuevoCanal').addEventListener('click', abrirNuevoCanal);
+  $('#btnAgregarCanal').addEventListener('click', (e) => menu(e.currentTarget, [
+    { ico: 'mas', texto: 'Crear un canal', accion: abrirNuevoCanal },
+    { ico: 'buscar', texto: 'Explorar canales', accion: abrirExplorar },
+  ]));
+  $('#btnNuevoDM').addEventListener('click', abrirNuevoMensaje);
   $('#btnMenu').addEventListener('click', () => $('#shell').classList.toggle('menu-abierto'));
   $('#btnYo').addEventListener('click', menuYo);
   $('#btnEspacio').addEventListener('click', menuYo);
-  $('#btnNuevoMensaje').addEventListener('click', () => { $('#seccionDMs').scrollIntoView({ block: 'start' }); $('#listaDMs .item')?.focus(); });
+  $('#btnNuevoMensaje').addEventListener('click', abrirNuevoMensaje);
   app.querySelectorAll('.seccion').forEach((sec) => sec.addEventListener('click', () => {
     sec.classList.toggle('plegada');
     sec.nextElementSibling.hidden = sec.classList.contains('plegada');
@@ -263,12 +299,20 @@ function pintarEstructura() {
     $('#shell').classList.add('menu-abierto');
   }));
   $('#listaCanales').addEventListener('click', (e) => { const b = e.target.closest('[data-canal]'); if (b) abrirCanal(b.dataset.canal); });
-  $('#listaDMs').addEventListener('click', async (e) => {
-    const bc = e.target.closest('[data-canal]'); if (bc) return abrirCanal(bc.dataset.canal);
-    const b = e.target.closest('[data-usuario]'); if (!b) return;
-    let c = dmCon(b.dataset.usuario);
-    if (!c) { c = await B.abrirDM(b.dataset.usuario); if (!canal(c.id)) S.canales.push(c); }
-    abrirCanal(c.id);
+  $('#listaDMs').addEventListener('click', (e) => {
+    const x = e.target.closest('[data-cerrar-dm]'); if (x) return cerrarDM(canal(x.dataset.cerrarDm));
+    const b = e.target.closest('[data-canal]'); if (b) abrirCanal(b.dataset.canal);
+  });
+  $('#cabecera').addEventListener('click', (e) => {
+    const c = S.actual; if (!c) return;
+    if (e.target.closest('#btnResumen')) return abrirResumen();
+    if (e.target.closest('#btnMiembros')) return abrirDetalles(c);
+    const h = e.target.closest('#tituloCanal'); if (!h) return;
+    if (c.es_dm) menu(h, [{ ico: 'cerrar', texto: 'Cerrar conversación', accion: () => cerrarDM(c) }]); else abrirDetalles(c);
+  });
+  $('#composerPrincipal').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unirse]'); if (!b || !S.actual) return;
+    if (b.dataset.unirse === 'detalles') abrirDetalles(S.actual); else unirse(S.actual);
   });
   $('#mensajes').addEventListener('click', clickMensaje);
   $('#hilo').addEventListener('click', clickMensaje);
@@ -278,20 +322,19 @@ function pintarEstructura() {
   }
 }
 
+// Como en Slack: solo los canales donde estoy y las conversaciones con mensajes,
+// la más reciente arriba. Un canal público que estoy mirando sin ser miembro
+// aparece mientras lo tengo abierto.
 function pintarLateral() {
-  const canales = S.canales.filter((c) => !c.es_dm).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const canales = S.canales.filter((c) => !c.es_dm && (soyMiembro(c) || S.actual?.id === c.id)).sort(porNombre);
   $('#listaCanales').innerHTML = canales.map((c) => {
-    const n = S.noLeidos[c.id] || 0;
-    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"><span class="hash">${c.es_privado ? ico('candado', 'chico') : '#'}</span><span class="nombre">${esc(c.nombre)}</span></button></li>`;
+    const n = soyMiembro(c) ? S.noLeidos[c.id] || 0 : 0;
+    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}${soyMiembro(c) ? '' : ' de-visita'}" data-canal="${c.id}"><span class="hash">${c.es_privado ? ico('candado', 'chico') : '#'}</span><span class="nombre">${esc(c.nombre)}</span></button></li>`;
   }).join('');
-  const gente = [...S.usuarios.values()].sort((a, b) => (a.id === S.yo.id) - (b.id === S.yo.id) || a.nombre.localeCompare(b.nombre));
-  $('#listaDMs').innerHTML = gente.map((u) => {
-    const c = dmCon(u.id); const n = c ? S.noLeidos[c.id] || 0 : 0;
-    return `<li><button class="item${c && S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-usuario="${u.id}"><span class="av-dm">${avatar(u, true)}<span class="punto${S.enLinea.has(u.id) ? ' on' : ''}"></span></span><span class="nombre">${esc(u.nombre)}${u.id === S.yo.id ? ' <small>tú</small>' : ''}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
-  }).join('') + S.canales.filter(dmSinContraparte).map((c) => {
-    const n = S.noLeidos[c.id] || 0;
-    const s = [...S.slack.values()].find((x) => x.nombre === c.descripcion) || { nombre: c.descripcion || '?', id: c.id };
-    return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}" title="Todavía no entra a Charla"><span class="av-dm">${avatar({ ...s, id: s.slack_id || c.id }, true)}<span class="punto"></span></span><span class="nombre">${esc(c.descripcion || 'Mensaje directo')}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
+  const dms = S.canales.filter(dmVisible).sort((a, b) => ms(S.ultimo[b.id]) - ms(S.ultimo[a.id]));
+  $('#listaDMs').innerHTML = dms.map((c) => {
+    const n = S.noLeidos[c.id] || 0; const u = personaDM(c); const sinEntrar = dmSinContraparte(c);
+    return `<li class="fila-dm"><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}"${sinEntrar ? ' title="Todavía no entra a Charla"' : ''}><span class="av-dm">${avatar(u, true)}<span class="punto${!sinEntrar && S.enLinea.has(u.id) ? ' on' : ''}"></span></span><span class="nombre">${esc(u.nombre)}${u.id === S.yo.id ? ' <small>tú</small>' : ''}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button><button class="cerrar-dm" data-cerrar-dm="${c.id}" title="Cerrar conversación" aria-label="Cerrar conversación con ${esc(u.nombre)}">${ico('cerrar', 'chico')}</button></li>`;
   }).join('');
   AV.pintar(); // título de la ventana y número del ícono
 }
@@ -300,47 +343,46 @@ function pintarYo() {
   $('#btnYo').innerHTML = `${avatar(S.yo)}<span class="punto on"></span>`;
 }
 
-function menuYo(e) {
-  e.stopPropagation();
+// Menú flotante pegado a un botón. items: [{ id, ico, texto, accion }].
+function menu(ancla, items, cab = '') {
   document.querySelector('.menu-flotante')?.remove();
   const el = document.createElement('div');
   el.className = 'menu-flotante';
-  el.innerHTML = `<div class="menu-cab">${avatar(S.yo)}<div><b>${esc(S.yo.nombre)}</b><span><i class="punto on"></i> Activo · @${esc(S.yo.usuario)}</span></div></div>
-    ${AV.opcionesMenu().map((o) => `<button data-m="${o.id}">${ico(o.icono)}${esc(o.texto)}</button>`).join('')}
-    ${conServidor ? `<button data-m="importar">${ico('importar')}Importar desde Slack</button>` : ''}
-    <button data-m="salir">${ico('salir')}Cerrar sesión en ${esc(CONFIG.nombreEspacio)}</button>`;
+  el.innerHTML = cab + items.map((it, i) => `<button data-i="${i}" data-m="${esc(it.id || '')}">${it.ico ? ico(it.ico) : ''}${esc(it.texto)}</button>`).join('');
   document.body.append(el);
-  const r = e.currentTarget.getBoundingClientRect();
-  el.style.left = `${Math.min(r.left, innerWidth - el.offsetWidth - 8)}px`;
+  const r = ancla.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8))}px`;
   el.style.top = r.top > innerHeight / 2 ? `${r.top - el.offsetHeight - 6}px` : `${r.bottom + 6}px`;
-  el.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('[data-m]'); if (!b) return;
-    el.remove();
-    if (b.dataset.m === 'salir') { await AV.alSalir(); B.salir(); }
-    if (b.dataset.m.startsWith('avisos-')) AV.alElegir(b.dataset.m);
-    if (b.dataset.m === 'importar') abrirImportar();
-  });
+  el.addEventListener('click', (ev) => { const b = ev.target.closest('[data-i]'); if (!b) return; el.remove(); items[+b.dataset.i].accion(); });
   setTimeout(() => addEventListener('mousedown', function fuera(ev) { if (!el.contains(ev.target)) { el.remove(); removeEventListener('mousedown', fuera); } }), 0);
+}
+
+function menuYo(e) {
+  e.stopPropagation();
+  menu(e.currentTarget, [
+    ...AV.opcionesMenu().map((o) => ({ id: o.id, ico: o.icono, texto: o.texto, accion: () => AV.alElegir(o.id) })),
+    conServidor && { id: 'importar', ico: 'importar', texto: 'Importar desde Slack', accion: abrirImportar },
+    { id: 'salir', ico: 'salir', texto: `Cerrar sesión en ${CONFIG.nombreEspacio}`, accion: async () => { await AV.alSalir(); B.salir(); } },
+  ].filter(Boolean), `<div class="menu-cab">${avatar(S.yo)}<div><b>${esc(S.yo.nombre)}</b><span><i class="punto on"></i> Activo · @${esc(S.yo.usuario)}</span></div></div>`);
 }
 
 function pintarCabecera() {
   const c = S.actual;
   const desc = c.es_dm ? (S.enLinea.has(otroDelDM(c)) ? 'En línea' : 'Desconectado') : c.descripcion;
-  const miembros = c.es_dm ? [] : c.es_privado ? c.miembros.map(usuario).filter(Boolean) : [...S.usuarios.values()];
+  const miembros = c.es_dm ? [] : c.miembros.map(usuario).filter(Boolean);
   const titulo = c.es_dm
-    ? `<span class="av-dm">${avatar(dmSinContraparte(c) ? { nombre: c.descripcion || '?', id: c.id } : usuario(otroDelDM(c)) || S.yo, true)}<span class="punto${S.enLinea.has(otroDelDM(c)) ? ' on' : ''}"></span></span>${esc(tituloCanal(c))}`
+    ? `<span class="av-dm">${avatar(personaDM(c), true)}<span class="punto${S.enLinea.has(otroDelDM(c)) ? ' on' : ''}"></span></span>${esc(tituloCanal(c))}`
     : `<span class="hash-titulo">${c.es_privado ? ico('candado') : '#'}</span>${esc(c.nombre)}`;
   $('#cabecera').innerHTML = `
     <div class="cab-fila">
-      <h2 title="${esc(desc || '')}">${titulo} ${ico('abajo', 'chico')}</h2>
-      ${miembros.length ? `<div class="miembros" title="${miembros.length} miembros">${miembros.slice(0, 3).map((u) => avatar(u, true)).join('')}<span>${miembros.length}</span></div>` : ''}
+      <h2><button id="tituloCanal" title="${esc(c.es_dm ? desc : 'Ver detalles del canal')}">${titulo} ${ico('abajo', 'chico')}</button></h2>
+      ${c.es_dm ? '' : `<button class="miembros" id="btnMiembros" title="Ver miembros">${miembros.slice(0, 3).map((u) => avatar(u, true)).join('')}<span>${miembros.length}</span></button>`}
     </div>
     <div class="pestanas">
       <button class="pestana activa">${ico('dm')}Mensajes</button>
       <button class="pestana" id="btnResumen" title="Resumen de las últimas 24 horas con Claude">${ico('chispa')}Resumen</button>
       ${desc && !c.es_dm ? `<span class="desc">${esc(desc)}</span>` : ''}
     </div>`;
-  $('#btnResumen').addEventListener('click', abrirResumen);
 }
 
 // ---------- mensajes ----------
@@ -688,11 +730,55 @@ async function abrirCanal(id) {
   S.noLeidos[id] = 0;
   AV.alLeer(id);
   pintarLateral();
-  const caja = montarComposer($('#composerPrincipal'), { canalId: id, placeholder: `Mensaje a ${tituloCanal(c)}` });
+  const caja = pintarPie();
   pintarMensajes({ alFinal: true });
   pintarEscribiendo();
-  caja.focus();
-  B.marcarLeido(id).catch(() => {});
+  caja?.focus();
+}
+
+// Abajo va el cuadro para escribir; en un canal público donde no estoy, la invitación a unirme.
+// Devuelve el cuadro de texto (o nada si no se puede escribir).
+function pintarPie() {
+  const c = S.actual; if (!c) return null;
+  if (c.es_dm || soyMiembro(c)) {
+    B.marcarLeido(c.id).catch(() => {});
+    return montarComposer($('#composerPrincipal'), { canalId: c.id, placeholder: `Mensaje a ${tituloCanal(c)}` });
+  }
+  $('#composerPrincipal').innerHTML = `<div class="barra-unirse"><p>Estás mirando <b># ${esc(c.nombre)}</b></p><div><button class="secundario" data-unirse="detalles">Detalles</button><button class="primario" data-unirse="si">Unirme al canal</button></div></div>`;
+  return null;
+}
+
+// ---------- canales: unirse, salir, cerrar conversaciones ----------
+async function unirse(c) {
+  try { await B.unirse(c.id); } catch (e) { return aviso(e.message); }
+  if (!soyMiembro(c)) c.miembros.push(S.yo.id);
+  S.noLeidos[c.id] = 0;
+  pintarLateral();
+  if (S.actual?.id === c.id) { pintarCabecera(); pintarPie()?.focus(); }
+}
+function quitarCanal(id) {
+  S.canales = S.canales.filter((x) => x.id !== id);
+  delete S.noLeidos[id];
+  if (S.actual?.id === id) { S.actual = null; const d = canalDeInicio(); if (d) abrirCanal(d.id); }
+}
+async function salirDeCanal(c) {
+  if (c.es_privado && !confirm(`Si sales de ${c.nombre}, que es privado, alguien tendrá que volver a agregarte. ¿Salir?`)) return false;
+  try { await B.sacarDelCanal(c.id, S.yo.id); } catch (e) { aviso(e.message); return false; }
+  c.miembros = c.miembros.filter((id) => id !== S.yo.id);
+  delete S.noLeidos[c.id];
+  if (c.es_privado) quitarCanal(c.id);
+  else if (S.actual?.id === c.id) { const d = canalDeInicio(); if (d && d.id !== c.id) abrirCanal(d.id); else { pintarCabecera(); pintarPie()?.focus(); } }
+  pintarLateral();
+  return true;
+}
+// Cerrar un DM lo saca de la lista hasta que llegue un mensaje nuevo.
+function cerrarDM(c) {
+  if (!c) return;
+  S.cerrado[c.id] = S.ultimo[c.id] || new Date().toISOString();
+  S.noLeidos[c.id] = 0;
+  B.cerrarDM(c.id, S.cerrado[c.id]).catch((e) => aviso(e.message));
+  if (S.actual?.id === c.id) { S.actual = null; const d = canalDeInicio(); if (d) abrirCanal(d.id); }
+  pintarLateral();
 }
 
 async function irAMensaje(m) {
@@ -742,20 +828,136 @@ function abrirBusqueda(inicial = '') {
 function abrirNuevoCanal() {
   const el = modal(`<div class="modal-cab"><h3>Crear un canal</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
     <form class="modal-cuerpo"><label>Nombre</label><input class="campo" name="nombre" placeholder="ej. lanzamiento-colombia" maxlength="40" required>
-    <label>Descripción <span style="font-weight:400;color:var(--tenue)">(opcional)</span></label><input class="campo" name="desc" maxlength="140" placeholder="¿De qué se habla aquí?">
+    <label>Descripción <span class="opcional">(opcional)</span></label><input class="campo" name="desc" maxlength="140" placeholder="¿De qué se habla aquí?">
+    <label>Visibilidad</label>
+    <label class="opcion"><input type="radio" name="tipo" value="publico" checked><span><b># Público</b><small>Cualquiera del equipo puede encontrarlo y unirse.</small></span></label>
+    <label class="opcion"><input type="radio" name="tipo" value="privado"><span><b>${ico('candado', 'chico')} Privado</b><small>Solo lo ven las personas que agregues.</small></span></label>
     <p class="error" hidden></p><div class="modal-pie"><button type="button" class="secundario" data-cerrar>Cancelar</button><button class="primario">Crear</button></div></form>`);
   const form = $('form', el); const err = $('.error', el);
   el.querySelectorAll('[data-cerrar]').forEach((b) => b.addEventListener('click', cerrarModal));
   form.nombre.focus();
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const nombre = form.nombre.value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const nombre = slugCanal(form.nombre.value);
     if (!nombre) return;
     try {
-      const c = await B.crearCanal(nombre, form.desc.value.trim());
+      const c = await B.crearCanal(nombre, form.desc.value.trim(), { privado: form.tipo.value === 'privado' });
       if (!canal(c.id)) S.canales.push(c);
-      cerrarModal(); pintarLateral(); abrirCanal(c.id);
-    } catch (ex) { err.hidden = false; err.textContent = /duplicate|unique/i.test(ex.message) ? `Ya existe #${nombre}.` : ex.message; }
+      pintarLateral(); await abrirCanal(c.id);
+      abrirDetalles(canal(c.id)); // para agregar gente de una vez
+    } catch (ex) { err.hidden = false; err.textContent = /duplicate|unique|ya existe/i.test(ex.message) ? `Ya existe un canal llamado ${nombre}.` : ex.message; }
+  });
+}
+
+// Lista de canales públicos para unirse o salir (como "Explorar canales" de Slack).
+function abrirExplorar() {
+  const el = modal(`<div class="modal-cab"><h3>Explorar canales</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
+    <div class="busqueda-cab">${ico('buscar')}<input class="busqueda-input" placeholder="Buscar un canal"></div><div class="resultados explorar"></div>`);
+  const input = $('input', el); const res = $('.resultados', el);
+  const pintar = () => {
+    const q = sinTildes(input.value.trim());
+    const lista = S.canales.filter((c) => !c.es_dm && !c.es_privado && sinTildes(`${c.nombre} ${c.descripcion}`).includes(q)).sort(porNombre);
+    res.innerHTML = lista.length ? lista.map((c) => {
+      const soy = soyMiembro(c); const n = c.miembros.length;
+      return `<div class="fila-canal"><button class="ir" data-ir="${c.id}"><b># ${esc(c.nombre)}</b><small>${soy ? '<span class="unido">✓ Estás</span> · ' : ''}${n} ${n === 1 ? 'miembro' : 'miembros'}${c.descripcion ? ` · ${esc(c.descripcion)}` : ''}</small></button>${soy ? (esGeneral(c) ? '' : `<button class="secundario" data-salir="${c.id}">Salir</button>`) : `<button class="primario" data-unirse="${c.id}">Unirse</button>`}</div>`;
+    }).join('') : '<div class="vacio">No hay canales con ese nombre.</div>';
+  };
+  pintar(); input.focus();
+  input.addEventListener('input', pintar);
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-cerrar]')) return cerrarModal();
+    const ir = e.target.closest('[data-ir]'); if (ir) { cerrarModal(); return abrirCanal(ir.dataset.ir); }
+    const u = e.target.closest('[data-unirse]'); const x = e.target.closest('[data-salir]');
+    if (!u && !x) return;
+    (u || x).disabled = true;
+    if (u) await unirse(canal(u.dataset.unirse)); else await salirDeCanal(canal(x.dataset.salir));
+    pintar();
+  });
+}
+
+// Detalles de un canal: nombre, descripción, miembros y salir.
+function abrirDetalles(c) {
+  if (!c || c.es_dm) return;
+  const el = modal('');
+  const caja = $('.modal', el);
+  const pintar = () => {
+    c = canal(c.id) || c;
+    const soy = soyMiembro(c);
+    const miembros = c.miembros.map(usuario).filter(Boolean).sort(porNombre);
+    const fuera = [...S.usuarios.values()].filter((u) => !c.miembros.includes(u.id)).sort(porNombre);
+    caja.innerHTML = `<div class="modal-cab"><h3>${c.es_privado ? ico('candado') : '<span class="hash-titulo">#</span>'}${esc(c.nombre)}</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
+      <div class="modal-cuerpo detalles">
+        ${soy ? `<form><label>Nombre</label><input class="campo" name="nombre" maxlength="40" required value="${esc(c.nombre)}"${esGeneral(c) ? ' disabled' : ''}>
+          <label>Descripción</label><input class="campo" name="desc" maxlength="140" placeholder="¿De qué se habla aquí?" value="${esc(c.descripcion || '')}">
+          <p class="error" hidden></p><div class="fila-fin"><button class="secundario">Guardar cambios</button></div></form>`
+        : `<p class="desc-canal">${esc(c.descripcion || 'Este canal no tiene descripción.')}</p>`}
+        <h4>${miembros.length} ${miembros.length === 1 ? 'miembro' : 'miembros'}</h4>
+        ${soy && fuera.length ? `<select class="campo" name="agregar"><option value="">Agregar a una persona…</option>${fuera.map((u) => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('')}</select>` : ''}
+        <ul class="lista-personas">${miembros.map((u) => `<li>${avatar(u, true)}<span>${esc(u.nombre)}${u.id === S.yo.id ? ' <small>tú</small>' : ''}</span>${soy && u.id !== S.yo.id && !esGeneral(c) ? `<button class="enlace" data-sacar="${u.id}">Sacar</button>` : ''}</li>`).join('')}</ul>
+        <div class="modal-pie">${soy ? (esGeneral(c) ? '<span class="nota-import">De general no se puede salir: es el canal de todo el equipo.</span>' : '<button class="secundario peligro" data-salir>Salir del canal</button>') : '<button class="primario" data-unirse>Unirme al canal</button>'}</div>
+      </div>`;
+  };
+  const refrescar = () => { pintar(); pintarLateral(); if (S.actual?.id === c.id) pintarCabecera(); };
+  pintar();
+  el.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target; const err = $('.error', form);
+    const nombre = esGeneral(c) ? c.nombre : slugCanal(form.nombre.value); const descripcion = form.desc.value.trim();
+    if (!nombre) return;
+    try {
+      await B.editarCanal(c.id, nombre, descripcion);
+      Object.assign(c, { nombre, descripcion });
+      refrescar(); aviso('Canal actualizado.');
+    } catch (ex) { err.hidden = false; err.textContent = /duplicate|unique|ya existe/i.test(ex.message) ? `Ya existe un canal llamado ${nombre}.` : ex.message; }
+  });
+  el.addEventListener('change', async (e) => {
+    if (e.target.name !== 'agregar' || !e.target.value) return;
+    const id = e.target.value;
+    try { await B.agregarAlCanal(c.id, id); if (!c.miembros.includes(id)) c.miembros.push(id); } catch (ex) { aviso(ex.message); }
+    refrescar();
+  });
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-cerrar]')) return cerrarModal();
+    if (e.target.closest('[data-unirse]')) { await unirse(c); return pintar(); }
+    if (e.target.closest('[data-salir]')) { if (await salirDeCanal(c)) cerrarModal(); return; }
+    const b = e.target.closest('[data-sacar]'); if (!b) return;
+    const u = usuario(b.dataset.sacar);
+    if (!confirm(`¿Sacar a ${u?.nombre || 'esta persona'} de ${c.nombre}?`)) return;
+    try { await B.sacarDelCanal(c.id, b.dataset.sacar); c.miembros = c.miembros.filter((id) => id !== b.dataset.sacar); } catch (ex) { aviso(ex.message); }
+    refrescar();
+  });
+}
+
+// Buscador de personas para abrir un mensaje directo.
+function abrirNuevoMensaje() {
+  const el = modal(`<div class="modal-cab"><h3>Nuevo mensaje</h3><button class="icono" data-cerrar>${ico('cerrar')}</button></div>
+    <div class="busqueda-cab">${ico('buscar')}<input class="busqueda-input" placeholder="Busca a una persona"></div><div class="resultados personas"></div>`);
+  const input = $('input', el); const res = $('.resultados', el);
+  let lista = [];
+  const pintar = () => {
+    const q = sinTildes(input.value.trim());
+    const gente = [...S.usuarios.values()].sort((a, b) => (a.id === S.yo.id) - (b.id === S.yo.id) || porNombre(a, b))
+      .map((u) => ({ u, usuario: u.id, nota: u.id === S.yo.id ? 'tú' : `@${u.usuario}`, enLinea: S.enLinea.has(u.id) }));
+    // Conversaciones importadas de Slack con quien todavía no entra a Charla.
+    const deSlack = S.canales.filter((c) => dmSinContraparte(c) && S.ultimo[c.id]).sort((a, b) => porNombre(personaDM(a), personaDM(b)))
+      .map((c) => ({ u: personaDM(c), canal: c.id, nota: 'todavía no entra a Charla' }));
+    lista = [...gente, ...deSlack].filter((x) => sinTildes(`${x.u.nombre} ${x.u.usuario || ''}`).includes(q));
+    res.innerHTML = lista.length ? lista.map((x, i) => `<button class="resultado persona" data-i="${i}"><span class="av-dm">${avatar(x.u, true)}<span class="punto${x.enLinea ? ' on' : ''}"></span></span><b>${esc(x.u.nombre)}</b><small>${esc(x.nota)}</small></button>`).join('')
+      : '<div class="vacio">Nadie con ese nombre.</div>';
+  };
+  async function elegir(x) {
+    if (!x) return;
+    cerrarModal();
+    let c = x.canal ? canal(x.canal) : dmCon(x.usuario);
+    try { if (!c) { c = await B.abrirDM(x.usuario); if (!canal(c.id)) S.canales.push(c); else c = canal(c.id); } } catch (e) { return aviso(e.message); }
+    abrirCanal(c.id);
+  }
+  pintar(); input.focus();
+  input.addEventListener('input', pintar);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); elegir(lista[0]); } });
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-cerrar]')) return cerrarModal();
+    const b = e.target.closest('[data-i]'); if (b) elegir(lista[+b.dataset.i]);
   });
 }
 
@@ -798,7 +1000,7 @@ const handlers = {
     if (tipo === 'INSERT' && esHistorial(nuevo)) {
       if (!canal(nuevo.channel_id)) {
         clearTimeout(recargarCanales);
-        recargarCanales = setTimeout(async () => { S.canales = await B.canales(); pintarLateral(); }, 1500);
+        recargarCanales = setTimeout(traerCanales, 1500);
         return;
       }
       if (!S.mensajes.has(nuevo.channel_id)) return;
@@ -806,18 +1008,20 @@ const handlers = {
       if (nuevo.channel_id === S.actual?.id && !repintarPendiente) repintarPendiente = setTimeout(() => { repintarPendiente = null; repintar(); }, 800);
       return;
     }
-    if (!canal(nuevo.channel_id)) { S.canales = await B.canales(); pintarLateral(); }
+    if (!canal(nuevo.channel_id)) await traerCanales();
     if (tipo === 'INSERT' && ultimoVisto && nuevo.created_at > ultimoVisto) ultimoVisto = nuevo.created_at;
     const yaEstaba = S.porId.has(nuevo.id);
     const m = guardarMensaje(nuevo);
+    // Un canal público donde no estoy no suma no leídos ni avisa (solo se ve si lo estoy mirando).
+    const mio = canal(m.channel_id); const dentro = mio && soyMiembro(mio);
     if (tipo === 'INSERT' && !yaEstaba && m.user_id !== S.yo.id) {
       const viendo = AV.viendo(m.channel_id);
-      if (!m.parent_id && !viendo) S.noLeidos[m.channel_id] = (S.noLeidos[m.channel_id] || 0) + 1;
-      if (viendo) { clearTimeout(marcarPendiente); marcarPendiente = setTimeout(() => B.marcarLeido(m.channel_id).catch(() => {}), 1000); }
-      avisarEscritorio(m);
+      if (dentro && !m.parent_id && !viendo) S.noLeidos[m.channel_id] = (S.noLeidos[m.channel_id] || 0) + 1;
+      if (dentro && viendo) { clearTimeout(marcarPendiente); marcarPendiente = setTimeout(() => B.marcarLeido(m.channel_id).catch(() => {}), 1000); }
+      if (dentro) avisarEscritorio(m);
       quitarEscribiendo(m.channel_id, m.parent_id, m.user_id);
       pintarLateral();
-    }
+    } else if (tipo === 'INSERT' && !yaEstaba && mio?.es_dm) pintarLateral(); // mi mensaje sube la conversación
     if (m.channel_id === S.actual?.id) repintar();
   },
   onReaccion(tipo, nuevo, viejo) {
@@ -831,11 +1035,37 @@ const handlers = {
   },
   async onCanal(c) {
     if (canal(c.id)) return;
-    if (c.es_dm) S.canales = await B.canales(); else S.canales.push(c);
+    if (c.es_dm || c.es_privado) return traerCanales();
+    S.canales.push(c); pintarLateral();
+  },
+  onCanalCambio(c) {
+    const mio = canal(c.id); if (!mio) return;
+    Object.assign(mio, { nombre: c.nombre, descripcion: c.descripcion, es_privado: c.es_privado });
+    pintarLateral(); if (S.actual?.id === c.id) pintarCabecera();
+  },
+  onCanalBorrado(id) { if (canal(id)) { quitarCanal(id); pintarLateral(); } },
+  // Alguien entró o salió de un canal (yo incluido, desde otra pestaña o porque me agregaron).
+  async onMiembro(tipo, { channel_id, user_id }) {
+    const c = canal(channel_id);
+    if (tipo === 'INSERT') {
+      if (!c) { if (user_id === S.yo.id) await traerCanales(); return; }
+      if (c.miembros.includes(user_id)) return;
+      c.miembros.push(user_id);
+      if (user_id === S.yo.id) S.noLeidos[c.id] = S.noLeidos[c.id] || 0;
+    } else {
+      if (!c || !c.miembros.includes(user_id)) return;
+      c.miembros = c.miembros.filter((id) => id !== user_id);
+      if (user_id === S.yo.id) {
+        delete S.noLeidos[c.id];
+        if (c.es_privado || c.es_dm) { quitarCanal(c.id); pintarLateral(); return; }
+      }
+    }
     pintarLateral();
+    if (S.actual?.id === channel_id) { pintarCabecera(); if (user_id === S.yo.id) pintarPie(); }
   },
   onUsuario(u) { S.usuarios.set(u.id, { ...S.usuarios.get(u.id), ...u }); pintarLateral(); },
-  onReconexion() { ponerseAlDia(); },
+  // Mientras estuvo caída la conexión pudieron agregarme a un canal o sacarme de uno.
+  async onReconexion() { await traerCanales().catch(() => {}); ponerseAlDia(); },
   onSlackUsuario(s) { S.slack.set(s.slack_id, s); },
   onPresencia(set) { S.enLinea = set; pintarLateral(); if (S.actual?.es_dm) pintarCabecera(); },
   onEscribiendo({ channel_id, parent_id, user_id }) {
@@ -926,6 +1156,7 @@ function abrirImportar() {
     } catch (e) { cuerpo.innerHTML = `<p class="error">${esc(e.message)}</p><div class="modal-pie"><button class="primario" id="reintentar">Reintentar</button></div>`; $('#reintentar', cuerpo).addEventListener('click', () => importar()); return; }
     if (r?.hecho) {
       S.canales = await B.canales(); S.mensajes.clear(); S.porId.clear();
+      await traerConversaciones();
       (await B.usuariosSlack().catch(() => [])).forEach((s) => S.slack.set(s.slack_id, s));
       pintarLateral(); if (S.actual) abrirCanal(S.actual.id);
       cuerpo.insertAdjacentHTML('beforeend', `<div class="modal-pie"><button class="secundario" id="otraVez">Importar lo nuevo otra vez</button><button class="primario" data-cerrar>Listo</button></div>`);
@@ -979,10 +1210,10 @@ async function arrancar() {
   const error = errorDeURL() || avisoSlack;
   try { S.yo = await B.iniciar(); } catch (e) { return pintarEntrada(e.message); }
   if (!S.yo) return pintarEntrada(error);
-  const [usuarios, canales, noLeidos, slack] = await Promise.all([B.usuarios(), B.canales(), B.noLeidos(), B.usuariosSlack().catch(() => [])]);
+  const [usuarios, canales, , slack] = await Promise.all([B.usuarios(), B.canales(), traerConversaciones(), B.usuariosSlack().catch(() => [])]);
   usuarios.forEach((u) => S.usuarios.set(u.id, u));
   slack.forEach((s) => S.slack.set(s.slack_id, s));
-  S.canales = canales; S.noLeidos = noLeidos;
+  S.canales = canales;
   pintarEstructura(); pintarYo(); pintarLateral();
   B.suscribir(handlers);
   ultimoVisto = (await B.ultimaFecha?.().catch(() => null)) || new Date().toISOString();
@@ -992,7 +1223,7 @@ async function arrancar() {
   const pedido = new URLSearchParams(location.search).get('canal');
   if (pedido) { const p = new URLSearchParams(location.search); p.delete('canal'); history.replaceState(null, '', location.pathname + (p.size ? `?${p}`.replace(/=(&|$)/g, '$1') : '')); }
   let ultimo = null; try { ultimo = localStorage.getItem('charla-ultimo-canal'); } catch { /* */ }
-  const inicial = canal(pedido) || canal(ultimo) || S.canales.find((c) => c.nombre === 'general') || S.canales.find((c) => !c.es_dm);
+  const inicial = canal(pedido) || canal(ultimo) || canalDeInicio();
   if (inicial) abrirCanal(inicial.id);
   AV.iniciar();
 }
