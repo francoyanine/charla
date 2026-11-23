@@ -139,8 +139,39 @@ function quitarMensaje(id) {
 async function cargarCanal(id) {
   if (S.mensajes.has(id)) return;
   const lista = await B.mensajes(id);
+  if (S.mensajes.has(id)) return; // otra carga del mismo canal terminó primero
+  // Mensajes de este canal que llegaron en vivo antes de abrirlo: están anotados pero
+  // sin lista. Se sueltan y se vuelven a guardar; si no, quedaban fuera del chat.
+  const sueltos = [...S.porId.values()].filter((m) => m.channel_id === id);
+  sueltos.forEach((m) => S.porId.delete(m.id));
   S.mensajes.set(id, []);
   lista.forEach(guardarMensaje);
+  sueltos.filter((m) => !S.porId.has(m.id) && (!lista.length || m.created_at >= lista[lista.length - 1].created_at)).forEach(guardarMensaje);
+}
+
+// ---------- ponerse al día ----------
+// La conexión en vivo puede cortarse sin avisar (el computador durmió, cambió la red,
+// venció la sesión). Cada minuto, y al volver a la ventana, se piden los mensajes
+// posteriores al último visto: lo que no llegó en vivo aparece igual.
+let ultimoVisto = null; // fecha (del servidor) del mensaje más nuevo que ya pasó por la app
+let poniendoAlDia = false;
+const TOPE_AL_DIA = 300;
+async function ponerseAlDia() {
+  if (poniendoAlDia || !S.yo || !ultimoVisto || !B.novedades) return;
+  poniendoAlDia = true;
+  try {
+    await B.revisarConexion?.();
+    const nuevos = await B.novedades(ultimoVisto, TOPE_AL_DIA);
+    if (nuevos.length >= TOPE_AL_DIA) {
+      // Estuvo mucho tiempo sin conexión: se vuelve a cargar todo.
+      ultimoVisto = nuevos[nuevos.length - 1].created_at;
+      S.mensajes.clear(); S.porId.clear();
+      S.noLeidos = await B.noLeidos();
+      ultimoVisto = (await B.ultimaFecha()) || ultimoVisto;
+      pintarLateral(); if (S.actual) abrirCanal(S.actual.id);
+    } else for (const m of nuevos) if (!S.porId.has(m.id)) await handlers.onMensaje('INSERT', m);
+  } catch { /* sin red: se reintenta en la próxima vuelta */ }
+  poniendoAlDia = false;
 }
 
 // ---------- pantalla de entrada ----------
@@ -771,6 +802,7 @@ const handlers = {
       return;
     }
     if (!canal(nuevo.channel_id)) { S.canales = await B.canales(); pintarLateral(); }
+    if (tipo === 'INSERT' && ultimoVisto && nuevo.created_at > ultimoVisto) ultimoVisto = nuevo.created_at;
     const yaEstaba = S.porId.has(nuevo.id);
     const m = guardarMensaje(nuevo);
     if (tipo === 'INSERT' && !yaEstaba && m.user_id !== S.yo.id) {
@@ -798,6 +830,7 @@ const handlers = {
     pintarLateral();
   },
   onUsuario(u) { S.usuarios.set(u.id, { ...S.usuarios.get(u.id), ...u }); pintarLateral(); },
+  onReconexion() { ponerseAlDia(); },
   onSlackUsuario(s) { S.slack.set(s.slack_id, s); },
   onPresencia(set) { S.enLinea = set; pintarLateral(); if (S.actual?.es_dm) pintarCabecera(); },
   onEscribiendo({ channel_id, parent_id, user_id }) {
@@ -847,6 +880,10 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && S.actual && S.noLeidos[S.actual.id]) { S.noLeidos[S.actual.id] = 0; pintarLateral(); B.marcarLeido(S.actual.id).catch(() => {}); }
 });
 setInterval(() => { if (S.actual) pintarMensajes(); }, 60000); // refresca "hace X min"
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ponerseAlDia(); });
+addEventListener('focus', ponerseAlDia);
+addEventListener('online', ponerseAlDia);
+setInterval(ponerseAlDia, 60000);
 
 // ---------- importar desde Slack ----------
 function abrirImportar() {
@@ -938,6 +975,7 @@ async function arrancar() {
   S.canales = canales; S.noLeidos = noLeidos;
   pintarEstructura(); pintarYo(); pintarLateral();
   B.suscribir(handlers);
+  ultimoVisto = (await B.ultimaFecha?.().catch(() => null)) || new Date().toISOString();
   let ultimo = null; try { ultimo = localStorage.getItem('charla-ultimo-canal'); } catch { /* */ }
   const inicial = canal(ultimo) || S.canales.find((c) => c.nombre === 'general') || S.canales.find((c) => !c.es_dm);
   if (inicial) abrirCanal(inicial.id);

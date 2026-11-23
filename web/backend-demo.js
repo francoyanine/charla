@@ -170,6 +170,13 @@ export function crear() {
       return res;
     },
     async usuariosSlack() { return []; },
+    async ultimaFecha() { return db.mensajes.reduce((a, m) => (m.created_at > a ? m.created_at : a), ''); },
+    async novedades(desde, tope = 300) {
+      db = leer() || db;
+      const visibles = new Set(db.canales.filter(puedeVer).map((c) => c.id));
+      return db.mensajes.filter((m) => visibles.has(m.channel_id) && m.created_at > desde)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, tope).map(conReacciones);
+    },
     async buscar(q) {
       const visibles = new Set(db.canales.filter(puedeVer).map((c) => c.id));
       const t = q.toLowerCase();

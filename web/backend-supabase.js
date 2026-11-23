@@ -11,6 +11,7 @@ export function crear(cfg) {
   const sb = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
   let yo = null;
   let pres = null;
+  let revisar = null;
   const urls = new Map();
 
   const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
@@ -95,6 +96,17 @@ export function crear(cfg) {
       }));
       return res;
     },
+    // Fecha del mensaje más nuevo que la persona puede ver (reloj del servidor).
+    async ultimaFecha() {
+      const filas = ok(await sb.from('messages').select('created_at').order('created_at', { ascending: false }).limit(1));
+      return filas[0]?.created_at ?? null;
+    },
+    // Mensajes creados después de `desde`: lo que no llegó por la conexión en vivo.
+    async novedades(desde, tope = 300) {
+      return ok(await sb.from('messages').select('*, reacciones:reactions(message_id, user_id, emoji)')
+        .gt('created_at', desde).order('created_at').limit(tope));
+    },
+    revisarConexion() { return revisar?.(); },
     async usuariosSlack() { return ok(await sb.from('slack_usuarios').select('slack_id, nombre, avatar_url, user_id')); },
     async slackConectado() { return ok(await sb.rpc('slack_conectado')); },
     async urlConectarSlack() {
@@ -141,13 +153,32 @@ export function crear(cfg) {
       return data.resumen;
     },
     suscribir(h) {
-      sb.channel('cambios')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (p) => h.onMensaje(p.eventType, p.new, p.old))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, (p) => h.onReaccion(p.eventType, p.new, p.old))
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channels' }, (p) => h.onCanal({ ...p.new, miembros: [] }))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (p) => p.new?.id && h.onUsuario(p.new))
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'slack_usuarios' }, (p) => p.new?.slack_id && h.onSlackUsuario(p.new))
-        .subscribe();
+      // El canal de cambios se vuelve a armar solo si se cae: al reconectar, la app pide
+      // lo que no llegó mientras tanto (h.onReconexion).
+      let cambios = null; let reintento = null; let caido = false; let n = 0; let intentos = 0;
+      const conectar = () => {
+        clearTimeout(reintento);
+        if (cambios) sb.removeChannel(cambios);
+        const ch = sb.channel(`cambios-${++n}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (p) => h.onMensaje(p.eventType, p.new, p.old))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, (p) => h.onReaccion(p.eventType, p.new, p.old))
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channels' }, (p) => h.onCanal({ ...p.new, miembros: [] }))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (p) => p.new?.id && h.onUsuario(p.new))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'slack_usuarios' }, (p) => p.new?.slack_id && h.onSlackUsuario(p.new));
+        cambios = ch;
+        ch.subscribe((estado) => {
+          if (ch !== cambios) return; // un canal anterior que se está cerrando
+          if (estado === 'SUBSCRIBED') { intentos = 0; if (caido) { caido = false; h.onReconexion?.(); } return; }
+          caido = true; // CHANNEL_ERROR, TIMED_OUT o CLOSED
+          clearTimeout(reintento); reintento = setTimeout(conectar, Math.min(30000, 4000 * ++intentos));
+        });
+      };
+      conectar();
+      revisar = async () => {
+        const { data: { session } } = await sb.auth.getSession(); // renueva la sesión si venció
+        if (session) sb.realtime.setAuth(session.access_token);
+        if (!['joined', 'joining'].includes(cambios?.state)) { caido = true; intentos = 0; conectar(); }
+      };
       pres = sb.channel('presencia', { config: { presence: { key: yo.id } } });
       pres.on('presence', { event: 'sync' }, () => h.onPresencia(new Set(Object.keys(pres.presenceState()))))
         .on('broadcast', { event: 'escribiendo' }, ({ payload }) => h.onEscribiendo(payload))
