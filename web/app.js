@@ -374,6 +374,17 @@ function fijarAlFinal(el, pegado) {
   if (pegado) el.scrollTop = el.scrollHeight;
   el.dataset.alto = el.scrollHeight;
 }
+const vigia = new ResizeObserver((entradas) => {
+  for (const e of entradas) { const el = e.target.closest('.mensajes'); if (el?.dataset.pegado) fijarAlFinal(el, true); }
+});
+// Pone la lista dentro de un envoltorio y lo vigila; deja de vigilar el anterior.
+function ponerLista(el, html) {
+  if (el._lista) vigia.unobserve(el._lista);
+  el.innerHTML = `<div class="lista-msg">${html}</div>`;
+  el._lista = el.firstElementChild;
+  if (!el._vigilado) { el._vigilado = true; vigia.observe(el); }
+  vigia.observe(el._lista);
+}
 function alDesplazar(e) {
   const el = e.target.closest?.('.mensajes'); if (!el) return;
   if (el.dataset.pegado && String(el.scrollHeight) !== el.dataset.alto) return fijarAlFinal(el, true); // creció el contenido
@@ -403,8 +414,8 @@ function pintarMensajes({ alFinal = false } = {}) {
   const pegado = alFinal || cercaDelFinal(el);
   const arriba = el.scrollTop;
   const lista = (S.mensajes.get(S.actual.id) || []).filter((m) => !m.parent_id);
-  el.innerHTML = lista.length ? htmlLista(lista)
-    : `<div class="inicio-canal"><h3>${S.actual.es_dm ? '' : '<span class="hash-titulo">#</span>'}${esc(tituloCanal(S.actual).replace(/^# /, ''))}</h3><p>${S.actual.es_dm ? 'Este es el comienzo de tu historial de mensajes directos.' : `Este es el comienzo del canal <b>#${esc(S.actual.nombre)}</b>. ${esc(S.actual.descripcion || '')}`}</p></div>`;
+  ponerLista(el, lista.length ? htmlLista(lista)
+    : `<div class="inicio-canal"><h3>${S.actual.es_dm ? '' : '<span class="hash-titulo">#</span>'}${esc(tituloCanal(S.actual).replace(/^# /, ''))}</h3><p>${S.actual.es_dm ? 'Este es el comienzo de tu historial de mensajes directos.' : `Este es el comienzo del canal <b>#${esc(S.actual.nombre)}</b>. ${esc(S.actual.descripcion || '')}`}</p></div>`);
   resolverArchivos(el);
   if (!pegado) el.scrollTop = arriba;
   fijarAlFinal(el, pegado);
@@ -426,9 +437,9 @@ function pintarHilo({ alFinal = false } = {}) {
   const cont = $('#mensajesHilo');
   const pegado = alFinal || cercaDelFinal(cont);
   const respuestas = (S.mensajes.get(padre.channel_id) || []).filter((m) => m.parent_id === padre.id);
-  cont.innerHTML = htmlMensaje(padre, null, { enHilo: true })
+  ponerLista(cont, htmlMensaje(padre, null, { enHilo: true })
     + `<div class="separador">${respuestas.length} ${respuestas.length === 1 ? 'respuesta' : 'respuestas'}</div>`
-    + respuestas.map((m, i) => htmlMensaje(m, respuestas[i - 1] || null, { enHilo: true })).join('');
+    + respuestas.map((m, i) => htmlMensaje(m, respuestas[i - 1] || null, { enHilo: true })).join(''));
   resolverArchivos(cont);
   fijarAlFinal(cont, pegado);
   activarEditor(cont);
@@ -644,9 +655,10 @@ async function abrirCanal(id) {
   if (S.actual?.id !== id) return;
   S.noLeidos[id] = 0;
   pintarLateral();
+  const caja = montarComposer($('#composerPrincipal'), { canalId: id, placeholder: `Mensaje a ${tituloCanal(c)}` });
   pintarMensajes({ alFinal: true });
   pintarEscribiendo();
-  montarComposer($('#composerPrincipal'), { canalId: id, placeholder: `Mensaje a ${tituloCanal(c)}` }).focus();
+  caja.focus();
   B.marcarLeido(id).catch(() => {});
 }
 

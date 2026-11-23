@@ -223,7 +223,7 @@ a:hover { text-decoration: underline; }
 .formato .icono { width: 28px; height: 28px; opacity: 0.75; }
 .formato .icono .ico { width: 16px; height: 16px; }
 .formato .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
-.composer textarea { display: block; width: 100%; border: 0; outline: none; background: none; resize: none; padding: 9px 12px 4px; max-height: 260px; line-height: 1.46668; }
+.composer textarea { display: block; width: 100%; border: 0; outline: none; background: none; resize: none; padding: 9px 12px 4px; max-height: 260px; line-height: 1.46668; min-height: calc(1.46668em + 13px); }  /* una línea completa desde el inicio: en Safari la caja partía más baja y crecía al escribir */
 .composer textarea::placeholder { color: var(--tenue); }
 .composer-barra { display: flex; align-items: center; gap: 4px; padding: 4px 6px 6px; }
 .composer-barra .icono .ico { width: 18px; height: 18px; }
