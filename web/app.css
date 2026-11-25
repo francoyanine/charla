@@ -346,3 +346,11 @@ a:hover { text-decoration: underline; }
   /* iOS hace zoom al escribir en campos con letra menor a 16 px. */
   input, textarea, select { font-size: 16px; }
 }
+
+/* ---------- Franja para activar las notificaciones ---------- */
+.franja-avisos { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; background: #1164a3; color: #fff; font-size: 14px; line-height: 1.35; }
+.franja-avisos > .ico { width: 18px; height: 18px; flex: none; }
+.franja-avisos > span { flex: 1; min-width: 0; }
+.franja-avisos .franja-activar { flex: none; background: #fff; color: #1164a3; font-weight: 700; border-radius: 6px; padding: 5px 12px; }
+.franja-avisos .franja-cerrar { flex: none; color: #fff; }
+.franja-avisos .franja-cerrar:hover { background: rgba(255, 255, 255, 0.18); }

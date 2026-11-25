@@ -70,6 +70,9 @@ export function crear(cfg) {
         adj = { nombre: archivo.name, tipo: archivo.type, tamano: archivo.size, ruta };
       }
       const m = ok(await sb.from('messages').insert({ channel_id: canalId, user_id: yo.id, parent_id: parentId, texto, archivo: adj }).select().single());
+      // Pide los avisos push de este mensaje, sin esperar (la base de datos también los pide;
+      // el servidor manda uno solo).
+      sb.functions.invoke('notificar', { body: { message_id: m.id } }).catch(() => {});
       return { ...m, reacciones: [] };
     },
     async editar(id, texto) { ok(await sb.from('messages').update({ texto, editado: true }).eq('id', id)); },
@@ -107,6 +110,25 @@ export function crear(cfg) {
         .gt('created_at', desde).order('created_at').limit(tope));
     },
     revisarConexion() { return revisar?.(); },
+    // ---------- avisos ----------
+    // Menciones y directos sin leer por conversación (para el número del ícono).
+    async avisos() { return ok(await sb.rpc('mis_avisos')); },
+    // Llave pública del servidor de avisos, para suscribir este dispositivo.
+    async clavePush() {
+      const r = await fetch(`${cfg.supabaseUrl}/functions/v1/notificar`, { headers: { apikey: cfg.supabaseAnonKey } });
+      const j = r.ok ? await r.json().catch(() => null) : null;
+      if (!j?.clave) throw new Error('el servidor de avisos no responde');
+      return j.clave;
+    },
+    async guardarSuscripcion(s, dispositivo) {
+      ok(await sb.rpc('guardar_suscripcion', { p_endpoint: s.endpoint, p_p256dh: s.keys.p256dh, p_auth: s.keys.auth, p_dispositivo: dispositivo }));
+    },
+    async quitarSuscripcion(endpoint) { ok(await sb.rpc('quitar_suscripcion', { p_endpoint: endpoint })); },
+    async probarAviso() {
+      const { data, error } = await sb.functions.invoke('notificar', { body: { prueba: true } });
+      if (error) throw new Error('No se pudo pedir el aviso de prueba.');
+      return data;
+    },
     async usuariosSlack() { return ok(await sb.from('slack_usuarios').select('slack_id, nombre, avatar_url, user_id')); },
     async slackConectado() { return ok(await sb.rpc('slack_conectado')); },
     async urlConectarSlack() {

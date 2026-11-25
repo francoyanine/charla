@@ -1,0 +1,9 @@
+{
+  "name": "charla-pruebas-notificaciones",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@electric-sql/pglite": "*",
+    "puppeteer-core": "*"
+  }
+}

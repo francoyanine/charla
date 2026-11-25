@@ -170,6 +170,21 @@ export function crear() {
       return res;
     },
     async usuariosSlack() { return []; },
+    // Menciones sin leer por canal, con la misma regla que el servidor.
+    async avisos() {
+      const re = new RegExp(`(^|[\\s(])@(${[yo.usuario, 'canal', 'todos', 'aqui'].map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})($|[^a-zA-Z0-9_])`, 'i');
+      return db.canales.filter((c) => puedeVer(c) && !c.es_dm).map((c) => {
+        const desde = db.lecturas[`${c.id}:${yo.id}`] || '';
+        return { channel_id: c.id, directos: 0, menciones: db.mensajes.filter((m) => m.channel_id === c.id && m.user_id !== yo.id && m.created_at > desde && re.test(m.texto || '')).length };
+      }).filter((f) => f.menciones);
+    },
+    // En la demo no hay servidor de avisos; las pruebas automáticas conectan uno local.
+    ...(window.__charlaPushPrueba ? {
+      async clavePush() { return (await (await fetch(window.__charlaPushPrueba.funcion)).json()).clave; },
+      async guardarSuscripcion(s, dispositivo) { await window.__charlaPushPrueba.guardar(s, dispositivo, yo); },
+      async quitarSuscripcion(endpoint) { await window.__charlaPushPrueba.quitar?.(endpoint, yo); },
+      async probarAviso() { return window.__charlaPushPrueba.probar(yo); },
+    } : {}),
     async ultimaFecha() { return db.mensajes.reduce((a, m) => (m.created_at > a ? m.created_at : a), ''); },
     async novedades(desde, tope = 300) {
       db = leer() || db;

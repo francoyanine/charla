@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
 import { ico } from './iconos.js';
+import { crearAvisos } from './avisos.js';
 
 // ?demo fuerza el modo demo aunque haya servidor configurado (para probar el diseño).
 const conServidor = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey) && !new URLSearchParams(location.search).has('demo');
@@ -28,6 +29,8 @@ const S = {
   urlsArchivo: new Map(), // ruta -> dirección ya resuelta
   tamImagen: new Map(), // ruta -> [ancho, alto] reales
 };
+// Número del ícono, sonido y notificaciones (ver avisos.js).
+const AV = crearAvisos({ B, S, aviso: (t) => aviso(t), tituloCanal: (c) => tituloCanal(c), alVolver: () => marcarActualLeido() });
 
 // ---------- utilidades ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -167,6 +170,7 @@ async function ponerseAlDia() {
       ultimoVisto = nuevos[nuevos.length - 1].created_at;
       S.mensajes.clear(); S.porId.clear();
       S.noLeidos = await B.noLeidos();
+      await AV.recargar();
       ultimoVisto = (await B.ultimaFecha()) || ultimoVisto;
       pintarLateral(); if (S.actual) abrirCanal(S.actual.id);
     } else for (const m of nuevos) if (!S.porId.has(m.id)) await handlers.onMensaje('INSERT', m);
@@ -289,9 +293,7 @@ function pintarLateral() {
     const s = [...S.slack.values()].find((x) => x.nombre === c.descripcion) || { nombre: c.descripcion || '?', id: c.id };
     return `<li><button class="item${S.actual?.id === c.id ? ' activo' : ''}${n ? ' sin-leer' : ''}" data-canal="${c.id}" title="Todavía no entra a Charla"><span class="av-dm">${avatar({ ...s, id: s.slack_id || c.id }, true)}<span class="punto"></span></span><span class="nombre">${esc(c.descripcion || 'Mensaje directo')}</span>${n ? `<span class="insignia">${n}</span>` : ''}</button></li>`;
   }).join('');
-  const total = Object.values(S.noLeidos).reduce((a, b) => a + b, 0);
-  document.title = `${total ? `(${total}) ` : ''}${S.actual ? tituloCanal(S.actual) + ' · ' : ''}Charla`;
-  if (window.charlaEscritorio) window.webkit.messageHandlers.charla.postMessage({ tipo: 'insignia', n: total });
+  AV.pintar(); // título de la ventana y número del ícono
 }
 
 function pintarYo() {
@@ -301,11 +303,10 @@ function pintarYo() {
 function menuYo(e) {
   e.stopPropagation();
   document.querySelector('.menu-flotante')?.remove();
-  const pedirAvisos = 'Notification' in window && Notification.permission === 'default';
   const el = document.createElement('div');
   el.className = 'menu-flotante';
   el.innerHTML = `<div class="menu-cab">${avatar(S.yo)}<div><b>${esc(S.yo.nombre)}</b><span><i class="punto on"></i> Activo · @${esc(S.yo.usuario)}</span></div></div>
-    ${pedirAvisos ? `<button data-m="avisos">${ico('campana')}Activar avisos de escritorio</button>` : ''}
+    ${AV.opcionesMenu().map((o) => `<button data-m="${o.id}">${ico(o.icono)}${esc(o.texto)}</button>`).join('')}
     ${conServidor ? `<button data-m="importar">${ico('importar')}Importar desde Slack</button>` : ''}
     <button data-m="salir">${ico('salir')}Cerrar sesión en ${esc(CONFIG.nombreEspacio)}</button>`;
   document.body.append(el);
@@ -315,8 +316,8 @@ function menuYo(e) {
   el.addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-m]'); if (!b) return;
     el.remove();
-    if (b.dataset.m === 'salir') B.salir();
-    if (b.dataset.m === 'avisos') await Notification.requestPermission();
+    if (b.dataset.m === 'salir') { await AV.alSalir(); B.salir(); }
+    if (b.dataset.m.startsWith('avisos-')) AV.alElegir(b.dataset.m);
     if (b.dataset.m === 'importar') abrirImportar();
   });
   setTimeout(() => addEventListener('mousedown', function fuera(ev) { if (!el.contains(ev.target)) { el.remove(); removeEventListener('mousedown', fuera); } }), 0);
@@ -685,6 +686,7 @@ async function abrirCanal(id) {
   await cargarCanal(id);
   if (S.actual?.id !== id) return;
   S.noLeidos[id] = 0;
+  AV.alLeer(id);
   pintarLateral();
   const caja = montarComposer($('#composerPrincipal'), { canalId: id, placeholder: `Mensaje a ${tituloCanal(c)}` });
   pintarMensajes({ alFinal: true });
@@ -768,16 +770,19 @@ async function abrirResumen() {
 
 // ---------- tiempo real ----------
 function avisarEscritorio(m) {
-  if (!document.hidden && S.actual?.id === m.channel_id) return;
   const c = canal(m.channel_id);
-  if (!c?.es_dm && !meMenciona(m.texto)) return;
+  if (!c || (!c.es_dm && !meMenciona(m.texto))) return; // solo mensajes directos y menciones
+  const viendo = AV.viendo(m.channel_id);
+  AV.alLlegar(m, c); // cuenta la mención y suena, si no lo estoy mirando
+  if (viendo) return;
   if (window.charlaEscritorio) {
     window.webkit.messageHandlers.charla.postMessage({ tipo: 'aviso', id: m.id, canal: m.channel_id,
       titulo: c.es_dm ? autor(m).nombre : `${autor(m).nombre} en ${tituloCanal(c)}`, cuerpo: m.texto || '📎 Archivo' });
     return;
   }
+  if (AV.pushActivo()) return; // en este dispositivo el aviso llega por push (también con Charla cerrada)
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const n = new Notification(c.es_dm ? autor(m).nombre : `${autor(m).nombre} en ${tituloCanal(c)}`, { body: m.texto || '📎 Archivo', tag: m.id, silent: false });
+  const n = new Notification(c.es_dm ? autor(m).nombre : `${autor(m).nombre} en ${tituloCanal(c)}`, { body: m.texto || '📎 Archivo', tag: m.channel_id, silent: false });
   n.onclick = () => { focus(); irAMensaje(m); n.close(); };
 }
 
@@ -806,7 +811,7 @@ const handlers = {
     const yaEstaba = S.porId.has(nuevo.id);
     const m = guardarMensaje(nuevo);
     if (tipo === 'INSERT' && !yaEstaba && m.user_id !== S.yo.id) {
-      const viendo = S.actual?.id === m.channel_id && !document.hidden;
+      const viendo = AV.viendo(m.channel_id);
       if (!m.parent_id && !viendo) S.noLeidos[m.channel_id] = (S.noLeidos[m.channel_id] || 0) + 1;
       if (viendo) { clearTimeout(marcarPendiente); marcarPendiente = setTimeout(() => B.marcarLeido(m.channel_id).catch(() => {}), 1000); }
       avisarEscritorio(m);
@@ -876,9 +881,14 @@ addEventListener('keydown', (e) => {
     else if (S.hilo && !S.editando) { S.hilo = null; $('#hilo').hidden = true; }
   }
 });
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && S.actual && S.noLeidos[S.actual.id]) { S.noLeidos[S.actual.id] = 0; pintarLateral(); B.marcarLeido(S.actual.id).catch(() => {}); }
-});
+// Al volver a Charla (ventana, pestaña o después de un rato sin tocarla) se da por leído el chat a la vista.
+function marcarActualLeido() {
+  if (!S.yo || !S.actual || !AV.viendo(S.actual.id)) return;
+  if (!S.noLeidos[S.actual.id] && !AV.menciones(S.actual.id)) return;
+  S.noLeidos[S.actual.id] = 0; AV.alLeer(S.actual.id); pintarLateral(); B.marcarLeido(S.actual.id).catch(() => {});
+}
+document.addEventListener('visibilitychange', marcarActualLeido);
+addEventListener('focus', marcarActualLeido);
 setInterval(() => { if (S.actual) pintarMensajes(); }, 60000); // refresca "hace X min"
 document.addEventListener('visibilitychange', () => { if (!document.hidden) ponerseAlDia(); });
 addEventListener('focus', ponerseAlDia);
@@ -976,9 +986,15 @@ async function arrancar() {
   pintarEstructura(); pintarYo(); pintarLateral();
   B.suscribir(handlers);
   ultimoVisto = (await B.ultimaFecha?.().catch(() => null)) || new Date().toISOString();
+  // Tocar una notificación abre su chat: con Charla abierta llega un mensaje del proceso de
+  // avisos; si estaba cerrada, el chat viene en la dirección (?canal=…).
+  navigator.serviceWorker?.addEventListener('message', (e) => { if (e.data?.tipo === 'ir' && canal(e.data.canal)) abrirCanal(e.data.canal); });
+  const pedido = new URLSearchParams(location.search).get('canal');
+  if (pedido) { const p = new URLSearchParams(location.search); p.delete('canal'); history.replaceState(null, '', location.pathname + (p.size ? `?${p}`.replace(/=(&|$)/g, '$1') : '')); }
   let ultimo = null; try { ultimo = localStorage.getItem('charla-ultimo-canal'); } catch { /* */ }
-  const inicial = canal(ultimo) || S.canales.find((c) => c.nombre === 'general') || S.canales.find((c) => !c.es_dm);
+  const inicial = canal(pedido) || canal(ultimo) || S.canales.find((c) => c.nombre === 'general') || S.canales.find((c) => !c.es_dm);
   if (inicial) abrirCanal(inicial.id);
+  AV.iniciar();
 }
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
