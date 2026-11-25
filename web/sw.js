@@ -2,7 +2,7 @@
 // y recibe los avisos push cuando la app está cerrada.
 // Abre al instante desde la caché y trae la versión nueva por detrás: un cambio publicado
 // se ve en la apertura siguiente. Los datos (Supabase) nunca pasan por la caché.
-const CACHE = 'charla-v4';
+const CACHE = 'charla-v5';
 const BASE = ['./', 'index.html', 'app.js', 'app.css', 'config.js', 'iconos.js', 'avisos.js', 'backend-supabase.js',
   'vendor/supabase-2.45.4.js', 'manifest.webmanifest', 'icon.svg', 'icono-192.png', 'icono-aviso.png'];
 const FUENTES = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];

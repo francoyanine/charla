@@ -49,7 +49,19 @@ const pre = await b.newPage(); await pre.goto(U); await pre.evaluate(() => local
 let A = await entrar(0, 'mac'); const B = await entrar(1, 'x'); const C = await entrar(2, 'x');
 await A.bringToFront(); await espera(300);
 prueba('mac: al abrir, el ícono está sin número', (await insignia(A)) === 0, await insignia(A));
-prueba('mac: el menú no ofrece activar notificaciones (son nativas)', !A.menu.some((x) => /notificaci|Sonido/i.test(x)), A.menu.join(' / '));
+prueba('mac: el menú no ofrece activar notificaciones ni sonido (son nativos)', !A.menu.some((x) => /Activar notificaci|Sonido/i.test(x)), A.menu.join(' / '));
+prueba('mac: el menú ofrece "Probar notificación"', A.menu.some((x) => /Probar notificación/.test(x)), A.menu.join(' / '));
+{
+  const antes = await A.evaluate(() => window.__mac.filter((m) => m.tipo === 'aviso').length);
+  await A.evaluate(() => document.querySelector('#btnYo').click());
+  await A.evaluate(() => [...document.querySelectorAll('.menu-flotante [data-m]')].find((x) => /Probar notificación/.test(x.textContent)).click());
+  await espera(300);
+  const avisosMac = await A.evaluate(() => window.__mac.filter((m) => m.tipo === 'aviso'));
+  const ultimo = avisosMac[avisosMac.length - 1];
+  prueba('mac: "Probar notificación" manda un aviso nativo de prueba', avisosMac.length === antes + 1 && /^prueba-/.test(ultimo?.id) && ultimo?.titulo === 'Charla' && ultimo?.canal === '', JSON.stringify(ultimo));
+  // El aviso de prueba no debe contarse en las pruebas que siguen.
+  await A.evaluate(() => { document.querySelector('.menu-flotante')?.remove(); window.__mac = window.__mac.filter((m) => !/^prueba-/.test(m.id || '')); });
+}
 
 await dice(B, A.nombre, 'hola, ¿tienes un minuto?');
 prueba('mac: 1 mensaje directo → ícono 1', (await insignia(A)) === 1, await insignia(A));
@@ -117,6 +129,16 @@ await limpiar(A); await espera(1600);
 await dice(C, 'random', 'sin mención', '#listaCanales'); await espera(200);
 prueba('web: mensaje de canal sin mención: ni aviso ni sonido', (await A.evaluate(() => window.__notif.length + window.__sonidos)) === 0);
 prueba('web: el menú trae sonido y no "activar" (ya hay permiso)', A.menu.some((x) => /Sonido de avisos: activado/.test(x)) && !A.menu.some((x) => /Activar notificaciones/.test(x)), A.menu.join(' / '));
+prueba('web: el menú ofrece "Probar notificación"', A.menu.some((x) => /Probar notificación/.test(x)), A.menu.join(' / '));
+{
+  const antes = await A.evaluate(() => window.__notif.length);
+  await A.bringToFront(); await A.evaluate(() => document.querySelector('#btnYo').click());
+  await A.evaluate(() => [...document.querySelectorAll('.menu-flotante [data-m]')].find((x) => /Probar notificación/.test(x.textContent)).click());
+  await espera(400);
+  const ns = await A.evaluate(() => window.__notif);
+  prueba('web sin push: "Probar notificación" muestra un aviso de prueba', ns.length === antes + 1 && ns[ns.length - 1].titulo === 'Charla' && ns[ns.length - 1].tag === 'prueba', JSON.stringify(ns[ns.length - 1]));
+  await A.evaluate(() => { document.querySelector('.menu-flotante')?.remove(); window.__notif = window.__notif.filter((n) => n.tag !== 'prueba'); });
+}
 // Sonido desactivado desde el menú.
 await A.bringToFront(); await A.evaluate(() => document.querySelector('#btnYo').click()); await A.evaluate(() => [...document.querySelectorAll('.menu-flotante [data-m]')].find((x) => /Sonido/.test(x.textContent)).click()); await espera(300);
 await limpiar(A); await enviar(B, 'sin sonido'); await espera(300);

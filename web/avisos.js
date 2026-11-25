@@ -119,10 +119,24 @@ export function crearAvisos({ B, S, aviso, tituloCanal, alVolver }) {
       const conPush = await suscribir();
       aviso(conPush ? 'Notificaciones activadas en este dispositivo.' : 'Notificaciones activadas mientras Charla esté abierta.');
     } catch (e) {
-      aviso(`Avisos activados solo con Charla abierta (${e.message}).`);
+      aviso(navigator.brave
+        ? 'Avisos activados solo con Charla abierta. Para recibirlos siempre, activa en brave://settings/privacy «Usar los servicios de Google para mensajería push» y reinicia Brave.'
+        : `Avisos activados solo con Charla abierta (${e.message}).`);
     }
   }
   async function probar() {
+    if (enMac) {
+      window.webkit.messageHandlers.charla.postMessage({ tipo: 'aviso', id: `prueba-${Date.now()}`, canal: '', titulo: 'Charla', cuerpo: 'Así te avisa Charla cuando te escriben.' });
+      return aviso('Aviso de prueba enviado. Si no aparece o no suena: Ajustes del Sistema → Notificaciones → Charla.');
+    }
+    if (!pushActivo) await suscribir().catch(() => false);
+    if (!pushActivo) { // sin push (por ejemplo Brave): el aviso sale solo con Charla abierta
+      sonar(true);
+      new Notification('Charla', { body: 'Así te avisa Charla cuando te escriben.', icon: 'icono-192.png', tag: 'prueba' });
+      return aviso(navigator.brave
+        ? 'En Brave los avisos llegan solo con Charla abierta. Para recibirlos siempre, activa en brave://settings/privacy «Usar los servicios de Google para mensajería push» y reinicia Brave.'
+        : 'Aviso de prueba mostrado. En este navegador los avisos llegan solo con Charla abierta.');
+    }
     try {
       const r = await B.probarAviso();
       aviso(r?.enviados ? 'Aviso de prueba enviado: debería aparecer en unos segundos.'
@@ -199,9 +213,11 @@ export function crearAvisos({ B, S, aviso, tituloCanal, alVolver }) {
     // Opciones para el menú de la persona.
     opcionesMenu() {
       const ops = [];
+      // En la app de Mac el aviso y su sonido son los de macOS: la prueba pasa por ahí.
+      if (enMac) ops.push({ id: 'avisos-probar', icono: 'campana', texto: 'Probar notificación' });
       if (!enMac) {
         if (hayNotif && Notification.permission === 'granted') {
-          if (pushActivo) ops.push({ id: 'avisos-probar', icono: 'campana', texto: 'Probar notificación' });
+          ops.push({ id: 'avisos-probar', icono: 'campana', texto: 'Probar notificación' });
         } else if (hayNotif && Notification.permission === 'denied') ops.push({ id: 'avisos-bloqueados', icono: 'campana', texto: 'Notificaciones bloqueadas en el navegador' });
         else ops.push({ id: 'avisos-activar', icono: 'campana', texto: 'Activar notificaciones' });
         ops.push({ id: 'avisos-sonido', icono: 'campana', texto: sonidoActivo() ? 'Sonido de avisos: activado' : 'Sonido de avisos: desactivado' });
