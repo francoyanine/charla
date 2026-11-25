@@ -11,6 +11,9 @@
 --     personas: todo por funciones, con las reglas en un solo lugar.
 --   · Una sola consulta (mis_conversaciones) trae último mensaje y no leídos.
 --
+-- Va junto con 005 (limpieza de datos) y con 007: como los avisos de 006 le llegaban a
+-- "todos los que ven el canal", 007 los limita a quienes están adentro.
+--
 -- Se puede volver a correr. La migración de miembros (paso 1) corre una sola
 -- vez: la segunda vez se saltea, así no le quita a nadie un canal al que se unió.
 

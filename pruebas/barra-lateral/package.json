@@ -1,0 +1,8 @@
+{
+  "name": "charla-pruebas-barra-lateral",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@electric-sql/pglite": "*"
+  }
+}
